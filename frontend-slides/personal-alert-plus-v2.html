@@ -1110,17 +1110,19 @@
 
         .thanks-logo {
             margin: 0 auto;
-            border-radius: 999px;
-            background: #ffffff;
-            border: var(--stroke) solid rgba(15, 23, 42, 0.18);
-            padding: clamp(0.52rem, 1.1vw, 0.9rem) clamp(0.8rem, 1.5vw, 1.3rem);
+            border-radius: 0;
+            background: transparent;
+            border: 0;
+            padding: 0;
             width: fit-content;
-            box-shadow: 0 12px 26px rgba(0, 0, 0, 0.25);
+            box-shadow: none;
         }
 
         .thanks-logo img {
-            max-height: clamp(1.6rem, 2.6vw, 2.2rem);
-            width: auto;
+            width: 100px;
+            height: 100px;
+            object-fit: contain;
+            border-radius: 30px;
         }
 
         /* ===========================================
@@ -1596,7 +1598,6 @@
                 <div class="thanks-logo">
                     <img src="images/modelmasterz_logo.png" alt="ModelMasterz logo">
                 </div>
-                <div class="deck-tag" style="color: #fbbf9a; margin-bottom: 0;">ModelMasterz</div>
                 <h1>Thank you</h1>
                 <p class="subline" style="margin: 0 auto;">Personal Alert Plus: an AI-assisted extension of Personal Alert Button for safer, faster, and more inclusive emergency support.</p>
             </div>
