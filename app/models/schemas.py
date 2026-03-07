@@ -28,3 +28,22 @@ class BackendAlertPayload(BaseModel):
     channel: str = "telegram"
     audio_url: str | None = None
     text: str | None = None
+
+
+class FewShotExample(BaseModel):
+    id: str | None = None
+    transcript: str
+    risk_level: str
+    created_at: str | None = None
+
+
+class AlertUpdate(BaseModel):
+    risk_level: str | None = None
+    risk_score: float | None = None
+    requires_operator: bool | None = None
+    status: str | None = None
+    ambulance_dispatched: bool | None = None
+    family_called: bool | None = None
+    is_attended: bool | None = None
+    is_resolved: bool | None = None
+    operator_notes: str | None = None
