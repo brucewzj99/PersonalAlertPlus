@@ -378,11 +378,26 @@ class BrainOrchestrator:
             )
 
         print(f"[BrainOrchestrator] Step 10: Sending confirmation to senior...")
+        send_check_in = analysis.risk_level == "UNCERTAIN"
+        send_need_info = analysis.risk_level in ["URGENT", "NON_URGENT"]
+
+        if send_need_info and alert_id:
+            self._db.client.table("senior_conversations").insert(
+                {
+                    "senior_id": senior.id,
+                    "alert_id": alert_id,
+                    "status": "active",
+                }
+            ).execute()
+            print(f"[BrainOrchestrator] Created conversation record for alert {alert_id}")
+
         await self._send_senior_confirmation(
             telegram_user_id=payload.telegram_user_id,
             senior=senior,
             risk_level=analysis.risk_level,
             alert_id=alert_id,
+            send_check_in_audio=send_check_in,
+            send_need_info_audio=send_need_info,
         )
 
         return ProcessingResult(
@@ -401,6 +416,8 @@ class BrainOrchestrator:
         senior: SeniorContext,
         risk_level: str,
         alert_id: str | None = None,
+        send_check_in_audio: bool = False,
+        send_need_info_audio: bool = False,
     ) -> None:
         """Send confirmation message to senior via Telegram."""
         if not self._telegram_bot or not telegram_user_id:
@@ -490,13 +507,57 @@ class BrainOrchestrator:
             )
 
         try:
-            await self._telegram_bot.send_message(
-                chat_id=telegram_user_id,
-                text=confirmation_text,
-                parse_mode="Markdown",
-                reply_markup=inline_keyboard,
-            )
-            print(f"[BrainOrchestrator] Confirmation sent to senior {senior.full_name}")
+            if send_check_in_audio and risk_level.lower() == "uncertain":
+                from app.bot.check_in_messages import get_check_in_message
+                import os
+
+                check_in_msg = get_check_in_message(lang)
+                audio_filename = check_in_msg["audio_file"]
+                audio_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                    "assets",
+                    "audio",
+                    lang,
+                    audio_filename,
+                )
+
+                with open(audio_path, "rb") as audio_file:
+                    await self._telegram_bot.send_voice(
+                        chat_id=telegram_user_id,
+                        voice=audio_file,
+                        caption=check_in_msg["text"],
+                        reply_markup=inline_keyboard,
+                    )
+                print(f"[BrainOrchestrator] Check-in audio sent to senior {senior.full_name} ({lang})")
+            elif send_need_info_audio and risk_level.lower() in ["urgent", "non_urgent"]:
+                from app.bot.check_in_messages import get_need_info_message
+                import os
+
+                need_info_msg = get_need_info_message(lang)
+                audio_filename = need_info_msg["audio_file"]
+                audio_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                    "assets",
+                    "audio",
+                    lang,
+                    audio_filename,
+                )
+
+                with open(audio_path, "rb") as audio_file:
+                    await self._telegram_bot.send_voice(
+                        chat_id=telegram_user_id,
+                        voice=audio_file,
+                        caption=need_info_msg["text"],
+                    )
+                print(f"[BrainOrchestrator] Need-info audio sent to senior {senior.full_name} ({lang})")
+            else:
+                await self._telegram_bot.send_message(
+                    chat_id=telegram_user_id,
+                    text=confirmation_text,
+                    parse_mode="Markdown",
+                    reply_markup=inline_keyboard,
+                )
+                print(f"[BrainOrchestrator] Confirmation sent to senior {senior.full_name}")
         except Exception as e:
             print(f"[BrainOrchestrator] Failed to send confirmation to senior: {e}")
 

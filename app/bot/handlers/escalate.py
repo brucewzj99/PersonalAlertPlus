@@ -80,6 +80,19 @@ async def handle_escalate_callback(update: Update, context: ContextTypes.DEFAULT
     lang = senior.preferred_language or "en"
     messages = SENIOR_CALLBACK_MESSAGES.get(lang, SENIOR_CALLBACK_MESSAGES["en"])
 
+    async def _finalize_callback_message(response_text: str, prefix: str) -> None:
+        rendered = f"{prefix} {response_text}"
+
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        await context.bot.send_message(
+            chat_id=query.from_user.id,
+            text=rendered,
+        )
+
     if action == "confirm_ok":
         db.client.table("alerts").update(
             {
@@ -98,7 +111,7 @@ async def handle_escalate_callback(update: Update, context: ContextTypes.DEFAULT
             }
         ).execute()
 
-        await query.edit_message_text(f"✅ {messages['confirm_ok']}")
+        await _finalize_callback_message(messages["confirm_ok"], "✅")
         return
 
     db.client.table("alerts").update(
@@ -119,7 +132,7 @@ async def handle_escalate_callback(update: Update, context: ContextTypes.DEFAULT
         }
     ).execute()
 
-    await query.edit_message_text(f"⚠️ {messages['escalate_confirmation']}")
+    await _finalize_callback_message(messages["escalate_confirmation"], "⚠️")
 
     contacts_response = (
         db.client.table("emergency_contacts")
