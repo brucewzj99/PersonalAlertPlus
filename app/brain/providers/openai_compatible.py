@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -8,6 +9,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config import get_settings
 from app.brain.schemas import RiskAnalysis
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleClient:
@@ -45,18 +48,25 @@ class OpenAICompatibleClient:
         }
         headers = {"Authorization": f"Bearer {self.api_key_stt}"}
 
-        async with httpx.AsyncClient(timeout=self.timeout * 2) as client:
-            response = await client.post(
-                f"{self.base_url_stt}/audio/transcriptions",
-                files=files,
-                data=data,
-                headers=headers,
-            )
-            response.raise_for_status()
-            result = response.json()
-            transcript = result.get("text", "").strip()
-            language = result.get("language", None)
-            return transcript, language
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout * 2) as client:
+                response = await client.post(
+                    f"{self.base_url_stt}/audio/transcriptions",
+                    files=files,
+                    data=data,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                result = response.json()
+                transcript = result.get("text", "").strip()
+                language = result.get("language", None)
+                return transcript, language
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error during transcription: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Transcription error: {e}")
+            raise
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
@@ -73,16 +83,23 @@ class OpenAICompatibleClient:
         }
         headers = {"Authorization": f"Bearer {self.api_key_stt}"}
 
-        async with httpx.AsyncClient(timeout=self.timeout * 2) as client:
-            response = await client.post(
-                f"{self.base_url_stt}/audio/translations",
-                files=files,
-                data=data,
-                headers=headers,
-            )
-            response.raise_for_status()
-            result = response.json()
-            return (result.get("text") or "").strip()
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout * 2) as client:
+                response = await client.post(
+                    f"{self.base_url_stt}/audio/translations",
+                    files=files,
+                    data=data,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                result = response.json()
+                return (result.get("text") or "").strip()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error during translation: {e.response.status_code} - {e.response.text}")
+            raise
+        except Exception as e:
+            logger.error(f"Translation error: {e}")
+            raise
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
@@ -118,9 +135,9 @@ class OpenAICompatibleClient:
     ) -> RiskAnalysis:
         """Classify risk level using the chat model."""
         from app.brain.prompts import (
-            RISK_CLASSIFICATION_SYSTEM_PROMPT,
             RISK_CLASSIFICATION_USER_PROMPT,
             FEW_SHOT_EXAMPLE_TEMPLATE,
+            render_risk_classification_system_prompt,
         )
 
         medical_info = medical_notes or "None provided"
@@ -138,8 +155,13 @@ class OpenAICompatibleClient:
         else:
             examples_str = "No examples available."
 
-        system_prompt = RISK_CLASSIFICATION_SYSTEM_PROMPT.format(
-            few_shot_examples=examples_str
+        base_prompt_template = self._db.get_prompt_setting(
+            key="risk_classification_system_prompt",
+            default_value=self._db.default_risk_prompt_template,
+        )
+        system_prompt = render_risk_classification_system_prompt(
+            base_template=base_prompt_template,
+            few_shot_examples=examples_str,
         )
 
         user_prompt = RISK_CLASSIFICATION_USER_PROMPT.format(

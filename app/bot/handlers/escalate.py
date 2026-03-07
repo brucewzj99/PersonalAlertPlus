@@ -97,6 +97,7 @@ async def handle_escalate_callback(update: Update, context: ContextTypes.DEFAULT
         db.client.table("alerts").update(
             {
                 "status": "closed",
+                "is_resolved": True,
                 "requires_operator": False,
                 "resolved_by": "senior",
             }

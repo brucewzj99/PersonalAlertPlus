@@ -3,6 +3,7 @@ from typing import Literal
 
 
 class BrainAlertPayload(BaseModel):
+    alert_id: str | None = None
     senior_id: str
     telegram_user_id: str
     channel: str = "telegram"

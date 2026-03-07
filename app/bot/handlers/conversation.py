@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 from telegram import Update
 from telegram.ext import (
@@ -10,11 +11,23 @@ from telegram.ext import (
 )
 
 from app.services.database import DatabaseService
-from app.bot.i18n import t as translate
+from app.services.storage import StorageService
+from app.brain.prompts import map_language_code
+from app.brain.providers.openai_compatible import OpenAICompatibleClient
+from app.brain.services.speech_to_text import process_audio as speech_to_text_process_audio
 
 logger = logging.getLogger(__name__)
 
 CONVERSATION_EXPIRY_MINUTES = 30
+
+
+def _first_dict_row(data: object) -> dict[str, Any] | None:
+    if not isinstance(data, list) or not data:
+        return None
+    first = data[0]
+    if not isinstance(first, dict):
+        return None
+    return cast(dict[str, Any], first)
 
 
 async def handle_senior_conversation_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -26,14 +39,14 @@ async def handle_senior_conversation_reply(update: Update, context: ContextTypes
 
     try:
         senior_response = db.client.table("seniors").select("*").eq("telegram_user_id", str(user.id)).execute()
-        if not senior_response.data:
+        senior = _first_dict_row(senior_response.data)
+        if senior is None:
             return False
     except Exception as e:
         logger.error(f"Error finding senior: {e}")
         return False
 
-    senior = senior_response.data[0]
-    senior_id = senior["id"]
+    senior_id = str(senior["id"])
     lang = senior.get("preferred_language", "en")
 
     try:
@@ -42,31 +55,77 @@ async def handle_senior_conversation_reply(update: Update, context: ContextTypes
         logger.error(f"Error checking conversations: {e}")
         return False
 
-    if not active_conversations.data:
+    conversation = _first_dict_row(active_conversations.data)
+    if conversation is None:
         return False
 
-    conversation = active_conversations.data[0]
-    alert_id = conversation["alert_id"]
+    alert_id = str(conversation["alert_id"])
 
     message_text = update.message.text
     has_voice = update.message.voice is not None
+    voice_bytes: bytes | None = None
+    voice_audio_url: str | None = None
+    original_message_text = (message_text or "").strip()
+    message_en = original_message_text
+    source_language = (senior.get("preferred_language") or "en")
+    translated = False
 
     if has_voice:
         try:
+            assert update.message.voice is not None
             voice_file = await context.bot.get_file(update.message.voice.file_id)
-            voice_bytes = await voice_file.download_as_bytearray()
+            voice_bytes = bytes(await voice_file.download_as_bytearray())
             logger.info(f"Voice message captured for alert {alert_id}, size: {len(voice_bytes)} bytes")
+
+            storage: StorageService = context.application.bot_data["storage_service"]
+            voice_audio_url = storage.upload_voice(
+                telegram_user_id=str(user.id),
+                data=voice_bytes,
+            )
+
+            ai_client = OpenAICompatibleClient()
+            stt_result = await speech_to_text_process_audio(
+                ai_client,
+                voice_bytes,
+                preferred_language_hint=senior.get("preferred_language"),
+            )
+            original_message_text = (stt_result.transcript or "").strip()
+            message_en = (stt_result.translated_text or stt_result.transcript or "").strip()
+            source_language = stt_result.language_detected or source_language
+            translated = message_en != original_message_text
         except Exception as e:
             logger.error(f"Failed to download voice: {e}")
             voice_bytes = None
+
+    if not has_voice and original_message_text:
+        preferred_language = str(senior.get("preferred_language") or "en").lower()
+        source_language = preferred_language
+        if preferred_language != "en":
+            try:
+                ai_client = OpenAICompatibleClient()
+                translated_text = await ai_client.translate_text(
+                    original_message_text,
+                    map_language_code(preferred_language) or preferred_language,
+                )
+                translated_text = translated_text.strip()
+                if translated_text:
+                    message_en = translated_text
+                    translated = message_en != original_message_text
+            except Exception as e:
+                logger.warning("Failed to translate senior text reply: %s", e)
+
+    if not message_en:
+        message_en = original_message_text
+    if not message_en and has_voice:
+        message_en = "Voice reply received (transcription unavailable)."
 
     db.client.table("senior_conversations").update(
         {
             "status": "completed",
             "ended_at": "now()",
-            "senior_response": message_text,
+            "senior_response": message_en,
         }
-    ).eq("id", conversation["id"]).execute()
+    ).eq("id", str(conversation["id"])).execute()
 
     db.client.table("ai_actions").insert(
         {
@@ -74,16 +133,21 @@ async def handle_senior_conversation_reply(update: Update, context: ContextTypes
             "action_type": "senior_conversation_reply",
             "action_status": "success",
             "details": {
-                "message": message_text,
+                "message": message_en,
+                "message_en": message_en,
+                "message_original": original_message_text,
+                "source_language": source_language,
+                "translated": translated,
                 "has_voice": has_voice,
-                "conversation_id": conversation["id"],
+                "audio_url": voice_audio_url,
+                "conversation_id": str(conversation["id"]),
             },
         }
     ).execute()
 
     db.client.table("alerts").update(
         {
-            "senior_response": message_text,
+            "senior_response": message_en,
             "requires_operator": True,
         }
     ).eq("id", alert_id).execute()
@@ -100,7 +164,9 @@ async def handle_senior_conversation_reply(update: Update, context: ContextTypes
     ack_text = ack_messages.get(lang, ack_messages["en"])
     await update.message.reply_text(f"✅ {ack_text}")
 
-    logger.info(f"Senior reply captured for alert {alert_id}: {message_text[:100] if message_text else '(voice)'}")
+    logger.info(
+        f"Senior reply captured for alert {alert_id}: {message_en[:100] if message_en else '(voice)'}"
+    )
     return True
 
 

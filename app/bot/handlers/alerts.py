@@ -27,10 +27,11 @@ async def handle_text_alert(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     try:
-        db.create_alert(
+        alert_row = db.create_alert(
             AlertInsert(senior_id=senior.id, channel="telegram", transcription=text)
         )
         payload = BackendAlertPayload(
+            alert_id=alert_row["id"],
             senior_id=senior.id,
             telegram_user_id=telegram_user_id,
             channel="telegram",
@@ -72,11 +73,12 @@ async def handle_voice_alert(
         except Exception:
             pass
 
-        db.create_alert(
+        alert_row = db.create_alert(
             AlertInsert(senior_id=senior.id, channel="telegram", audio_url=audio_url)
         )
 
         payload = BackendAlertPayload(
+            alert_id=alert_row["id"],
             senior_id=senior.id,
             telegram_user_id=telegram_user_id,
             channel="telegram",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from typing import Any, cast
 
 from telegram import Bot
 
@@ -23,6 +24,7 @@ from app.brain.services.notification_service import NotificationService
 from app.brain.services.action_logger import ActionLogger
 from app.brain.prompts import map_language_code
 from app.services.database import DatabaseService
+from app.services.storage import StorageService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -150,6 +152,7 @@ class BrainOrchestrator:
     def __init__(self, telegram_bot: Bot | None = None) -> None:
         print("[BrainOrchestrator] Initializing...")
         self._db = DatabaseService()
+        self._storage = StorageService(self._db)
         self._ai_client = OpenAICompatibleClient()
         self._audio_fetcher = AudioFetcher(self._db)
         self._risk_engine = RiskEngine()
@@ -221,10 +224,10 @@ class BrainOrchestrator:
             f"[BrainOrchestrator] Senior found: {senior.full_name} (lang: {senior.preferred_language})"
         )
 
-        print("[BrainOrchestrator] Step 2: Creating alert record in database...")
-        alert_record = self._create_alert_record(payload, senior)
+        print("[BrainOrchestrator] Step 2: Creating/updating alert record in database...")
+        alert_record = self._create_or_get_alert_record(payload, senior)
         alert_id = alert_record["id"]
-        print(f"[BrainOrchestrator] Alert record created: {alert_id}")
+        print(f"[BrainOrchestrator] Alert record ready: {alert_id}")
 
         try:
             self._update_alert_status(alert_id, "processing")
@@ -234,24 +237,43 @@ class BrainOrchestrator:
 
         content = payload.text
         language_detected = None
+        translated_text = None
+        audio_url = payload.audio_url
+        inline_audio_bytes: bytes | None = None
 
-        has_voice = bool(payload.audio_base64 or payload.audio_url)
+        if payload.audio_base64:
+            inline_audio_bytes = base64.b64decode(payload.audio_base64)
+            if not audio_url:
+                try:
+                    audio_url = self._storage.upload_voice(
+                        telegram_user_id=payload.telegram_user_id or payload.senior_id,
+                        data=inline_audio_bytes,
+                    )
+                    print(
+                        "[BrainOrchestrator] Uploaded inline audio to Supabase Storage for dashboard playback"
+                    )
+                except Exception as e:
+                    logger.warning("Failed to store inline audio for dashboard: %s", e)
+
+        has_voice = bool(inline_audio_bytes or audio_url)
         if has_voice:
             print(
                 "[BrainOrchestrator] Step 3a: Processing voice message (detect → transcribe/translate)..."
             )
             try:
-                if payload.audio_base64:
-                    audio_bytes = base64.b64decode(payload.audio_base64)
+                if inline_audio_bytes is not None:
+                    audio_bytes = inline_audio_bytes
                     print(
                         f"[BrainOrchestrator] Using inline audio from Telegram ({len(audio_bytes)} bytes), running speech-to-text..."
                     )
                 else:
+                    if audio_url is None:
+                        raise RuntimeError("Audio URL missing for voice alert")
                     print(
-                        f"[BrainOrchestrator] Fetching audio from: {payload.audio_url}"
+                        f"[BrainOrchestrator] Fetching audio from: {audio_url}"
                     )
                     audio_bytes = await self._audio_fetcher.fetch_audio_bytes(
-                        payload.audio_url
+                        audio_url
                     )
                     print(
                         f"[BrainOrchestrator] Audio fetched ({len(audio_bytes)} bytes), running speech-to-text..."
@@ -294,7 +316,23 @@ class BrainOrchestrator:
                     )
         else:
             print("[BrainOrchestrator] Step 3b: Processing text message...")
-            translated_text = None
+            preferred_lang = (senior.preferred_language or "en").strip().lower()
+            language_detected = preferred_lang
+            if content:
+                if preferred_lang == "en":
+                    translated_text = content
+                else:
+                    try:
+                        translated_candidate = await self._ai_client.translate_text(
+                            content,
+                            map_language_code(preferred_lang) or preferred_lang,
+                        )
+                        translated_text = translated_candidate.strip() or content
+                    except Exception as e:
+                        logger.warning("Text translation failed: %s", e)
+                        translated_text = content
+            else:
+                translated_text = None
 
         if not content:
             print("[BrainOrchestrator] ERROR: No content to analyze")
@@ -373,7 +411,7 @@ class BrainOrchestrator:
         )
         self._update_alert_complete(
             alert_id=alert_id,
-            audio_url=payload.audio_url,
+            audio_url=audio_url,
             transcription=content,
             language_detected=language_detected_db,
             translated_text=translated_text,
@@ -396,7 +434,7 @@ class BrainOrchestrator:
                 summary=summary,
                 risk_score=analysis.risk_score,
                 transcript=content,
-                audio_url=payload.audio_url,
+                audio_url=audio_url,
             )
 
         print(f"[BrainOrchestrator] Step 10: Sending confirmation to senior...")
@@ -598,19 +636,23 @@ class BrainOrchestrator:
         response = (
             self._db.client.table("seniors").select("*").eq("id", senior_id).execute()
         )
-        if not response.data:
+        rows = response.data if isinstance(response.data, list) else []
+        if not rows:
             return None
-        data = response.data[0]
+        data = rows[0]
+        if not isinstance(data, dict):
+            return None
+        senior = cast(dict[str, Any], data)
         return SeniorContext(
-            id=data["id"],
-            full_name=data["full_name"],
-            phone_number=data["phone_number"],
-            address=data["address"],
-            preferred_language=data.get("preferred_language"),
-            medical_notes=data.get("medical_notes"),
-            birth_year=data.get("birth_year"),
-            birth_month=data.get("birth_month"),
-            birth_day=data.get("birth_day"),
+            id=str(senior.get("id") or ""),
+            full_name=str(senior.get("full_name") or ""),
+            phone_number=str(senior.get("phone_number") or ""),
+            address=str(senior.get("address") or ""),
+            preferred_language=cast(str | None, senior.get("preferred_language")),
+            medical_notes=cast(str | None, senior.get("medical_notes")),
+            birth_year=cast(int | None, senior.get("birth_year")),
+            birth_month=cast(int | None, senior.get("birth_month")),
+            birth_day=cast(int | None, senior.get("birth_day")),
         )
 
     def _get_emergency_contacts(self, senior_id: str) -> list[EmergencyContact]:
@@ -621,25 +663,46 @@ class BrainOrchestrator:
             .order("priority_order")
             .execute()
         )
-        if not response.data:
+        rows = response.data if isinstance(response.data, list) else []
+        if not rows:
             return []
+        dict_rows = [cast(dict[str, Any], row) for row in rows if isinstance(row, dict)]
         return [
             EmergencyContact(
-                id=row["id"],
-                senior_id=row["senior_id"],
-                name=row["name"],
+                id=str(row.get("id") or ""),
+                senior_id=str(row.get("senior_id") or ""),
+                name=str(row.get("name") or ""),
                 relationship=row.get("relationship"),
                 phone_number=row.get("phone_number"),
                 telegram_user_id=row.get("telegram_user_id"),
-                priority_order=row.get("priority_order", 1),
-                notify_on_uncertain=row.get("notify_on_uncertain", False),
+                priority_order=int(row.get("priority_order", 1) or 1),
+                notify_on_uncertain=bool(row.get("notify_on_uncertain", False)),
             )
-            for row in response.data
+            for row in dict_rows
         ]
 
-    def _create_alert_record(
+    def _create_or_get_alert_record(
         self, payload: BrainAlertPayload, senior: SeniorContext
     ) -> dict:
+        if payload.alert_id:
+            existing = self._get_alert_by_id(payload.alert_id)
+            if existing and str(existing.get("senior_id")) == payload.senior_id:
+                update_payload: dict[str, Any] = {
+                    "processing_status": "pending",
+                    "processing_error": None,
+                }
+                if payload.text is not None:
+                    update_payload["transcription"] = payload.text
+                if payload.audio_url is not None:
+                    update_payload["audio_url"] = payload.audio_url
+
+                self._db.client.table("alerts").update(update_payload).eq(
+                    "id", payload.alert_id
+                ).execute()
+                refreshed = self._get_alert_by_id(payload.alert_id)
+                if refreshed:
+                    return refreshed
+
         response = (
             self._db.client.table("alerts")
             .insert(
@@ -653,7 +716,19 @@ class BrainOrchestrator:
             )
             .execute()
         )
-        return response.data[0]
+        rows = response.data if isinstance(response.data, list) else []
+        first = rows[0] if rows else {}
+        return cast(dict[str, Any], first if isinstance(first, dict) else {})
+
+    def _get_alert_by_id(self, alert_id: str) -> dict | None:
+        response = self._db.client.table("alerts").select("*").eq("id", alert_id).limit(
+            1
+        ).execute()
+        rows = response.data or []
+        if not rows:
+            return None
+        first = rows[0]
+        return cast(dict[str, Any], first if isinstance(first, dict) else None)
 
     def _update_alert_status(self, alert_id: str, status: str) -> None:
         self._db.client.table("alerts").update({"processing_status": status}).eq(
@@ -677,7 +752,7 @@ class BrainOrchestrator:
         # Normalize risk_level for DB: constraint allows URGENT, NON_URGENT, UNCERTAIN, FALSE_ALARM (uppercase)
         risk_level_normalized = _risk_level_for_db(risk_level or "UNCERTAIN")
         print(f"[BrainOrchestrator] DEBUG _update_alert_complete: alert_id={alert_id} risk_level={risk_level!r} -> db={risk_level_normalized!r} status={status!r}")
-        update_payload: dict[str, object] = {
+        update_payload: dict[str, Any] = {
                 "transcription": transcription,
                 "language_detected": language_detected,
                 "translated_text": translated_text,
@@ -690,7 +765,6 @@ class BrainOrchestrator:
                 "processing_status": "completed",
                 "processing_error": None,
                 "resolved_by": "ai",
-                "provider_metadata": None,
             }
         if audio_url is not None:
             update_payload["audio_url"] = audio_url

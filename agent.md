@@ -121,7 +121,10 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * See transcription + language
   * View risk score & reasoning
   * Confirm or override AI decision
-  * Rate AI accuracy (feedback loop)
+  * Add a case directly into `few_shot_examples` with one click
+  * Manage emergency contacts in a dedicated pop-up interface
+  * View senior medical notes during contact management
+  * Edit base AI risk prompt in a Settings tab
 
 * This builds a supervised AI improvement cycle.
 
@@ -134,7 +137,7 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * Telegram Bot → Senior trigger channel
   * FastAPI Backend → AI processing & orchestration
   * Supabase (Postgres + RLS) → Secure data storage
-  * Next.js Dashboard → Operator interface
+  * React + Vite Dashboard → Operator interface
   * (Optional) ClickHouse → Analytics layer
 
 ---
@@ -373,6 +376,7 @@ When the bot receives an alert, it sends this payload to the backend:
 
 ```json
 {
+  "alert_id": "uuid",
   "senior_id": "uuid",
   "telegram_user_id": "string",
   "channel": "telegram",
@@ -387,13 +391,18 @@ The backend retrieves senior details (name, phone, address, medical notes) using
 
 ## 6. 🗄 Database Design
 
+* Fresh-start bootstrap SQL is provided at `database/000-master.sql`.
+* Migration rule: never modify historical migration files; append new numbered migrations only.
+
 * Core Tables:
 
   * seniors
   * emergency_contacts
   * alerts
   * ai_actions
-  * operator_actions
+  * few_shot_examples
+  * senior_conversations
+  * prompt_settings
 
 ---
 
@@ -407,7 +416,6 @@ Registered seniors profile information.
 | full_name | text | Yes | Senior's full name |
 | phone_number | text | Yes | Singapore format (+65XXXXXXXX), unique |
 | telegram_user_id | text | No | Telegram user ID (for bot auth) |
-| button_id | text | No | Hardware PAB button ID |
 | address | text | Yes | Residential address |
 | birth_year | int | No | Year of birth (YYYY) |
 | birth_month | int | No | Month of birth (1-12) |
@@ -458,7 +466,6 @@ Emergency alerts triggered by seniors.
 | resolved_by | text | No | Who resolved (ai/operator) |
 | processing_status | text | No | pending/processing/completed/failed |
 | processing_error | text | No | Error message if processing failed |
-| provider_metadata | jsonb | No | AI provider metadata (model, tokens) |
 | created_at | timestamptz | Yes | Alert creation timestamp |
 
 ---
@@ -482,25 +489,7 @@ Automated AI-triggered actions based on risk assessment.
 
 ---
 
-### 6.5 👮 Operator Actions Table (`public.operator_actions`)
-
-Human operator decisions and feedback.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| id | uuid | Yes | Auto-generated primary key |
-| alert_id | uuid | Yes | Foreign key to alerts(id) |
-| operator_id | uuid | Yes | Foreign key to auth.users(id) |
-| ai_recommendation | text | No | AI's suggested action |
-| operator_decision | text | No | Operator's final decision |
-| decision_notes | text | No | Additional notes from operator |
-| ai_accuracy_rating | int | No | Rating 1-5 of AI accuracy |
-| overridden | boolean | No | Did operator override AI? |
-| created_at | timestamptz | Yes | Action timestamp |
-
----
-
-### 6.6 🔐 Security Model
+### 6.5 🔐 Security Model
 
   * Seniors have no direct DB access
   * Backend uses Supabase service role

@@ -17,6 +17,10 @@ flowchart TB
         API2["POST /api/v1/brain/alerts/ingest"]
         API3["GET /api/v1/brain/health"]
         API4["GET /health"]
+        API5["GET /api/v1/operator/alerts"]
+        API6["GET /api/v1/operator/seniors/overview"]
+        API7["GET/PUT /api/v1/operator/settings/risk-prompt"]
+        API8["CRUD /api/v1/operator/few-shot-examples"]
     end
 
     subgraph Brain["🧠 Brain Layer (app/brain/)"]
@@ -36,9 +40,9 @@ flowchart TB
             S4[Action Logger<br/>action_logger.py]
         end
         
-        subgraph Prompts["Prompts (app/brain/prompts.py)"]
+    subgraph Prompts["Prompts (app/brain/prompts.py)"]
             PM1[Translation Prompts]
-            PM2[Classification Prompts]
+            PM2[Classification Prompt Template]
             PM3[Keyword Detection]
         end
     end
@@ -52,6 +56,8 @@ flowchart TB
         DB2[(Emergency Contacts)]
         DB3[(Alerts)]
         DB4[(AI Actions)]
+        DB5[(Few Shot Examples)]
+        DB6[(Prompt Settings)]
     end
 
     subgraph External["🔌 External Services"]
@@ -85,6 +91,8 @@ flowchart TB
     
     P1 -->|"Classify"| P3
     P3 --> PM2
+    DB6 -->|"Base prompt"| P1
+    DB5 -->|"Examples"| P1
     PM2 -->|"Risk Level"| P1
     
     P1 -->|"Analysis"| B2
@@ -110,6 +118,10 @@ flowchart TB
     
     B2 -->|"Get Senior"| DB1
     B2 -->|"Get Contacts"| DB2
+    API5 --> DB3
+    API6 --> DB1
+    API8 --> DB5
+    API7 --> DB6
 ```
 
 ---
@@ -183,7 +195,7 @@ erDiagram
     SENIORS ||--o{ ALERTS : "has many"
     SENIORS ||--o{ EMERGENCY_CONTACTS : "has many"
     ALERTS ||--o{ AI_ACTIONS : "has many"
-    ALERTS ||--o{ OPERATOR_ACTIONS : "has many"
+    ALERTS ||--o{ SENIOR_CONVERSATIONS : "has many"
 
     SENIORS {
         uuid id PK
@@ -228,7 +240,6 @@ erDiagram
         text translated_text
         text analysis_summary
         jsonb keywords
-        jsonb provider_metadata
         timestamptz created_at
     }
 
@@ -245,15 +256,30 @@ erDiagram
         timestamptz created_at
     }
 
-    OPERATOR_ACTIONS {
+    FEW_SHOT_EXAMPLES {
         uuid id PK
+        text transcript
+        text risk_level
+        timestamptz created_at
+    }
+
+    SENIOR_CONVERSATIONS {
+        uuid id PK
+        uuid senior_id FK
         uuid alert_id FK
-        uuid operator_id FK
-        text ai_recommendation
-        text operator_decision
-        text decision_notes
-        int ai_accuracy_rating
-        bool overridden
+        text status
+        text senior_response
+        timestamptz started_at
+        timestamptz ended_at
+        timestamptz updated_at
+        timestamptz created_at
+    }
+
+    PROMPT_SETTINGS {
+        text key PK
+        text value
+        text description
+        timestamptz updated_at
         timestamptz created_at
     }
 ```
@@ -422,3 +448,9 @@ sequenceDiagram
 | `/telegram/webhook` | POST | Telegram bot updates |
 | `/api/v1/brain/alerts/ingest` | POST | Process new alert |
 | `/api/v1/brain/health` | GET | Brain service health |
+| `/api/v1/operator/alerts` | GET | Operator alert feed |
+| `/api/v1/operator/seniors/overview` | GET | Senior dashboard with medical notes |
+| `/api/v1/operator/settings/risk-prompt` | GET/PUT | Read/update base AI risk prompt |
+| `/api/v1/operator/few-shot-examples` | GET/POST/PATCH/DELETE | Manage few-shot examples |
+| `/api/v1/operator/seniors/{senior_id}/emergency-contacts` | GET/POST | Manage contacts by senior |
+| `/api/v1/operator/emergency-contacts/{contact_id}` | PATCH/DELETE | Update/remove contact |

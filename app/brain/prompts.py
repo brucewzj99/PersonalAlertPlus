@@ -5,7 +5,7 @@ TRANSLATION_USER_PROMPT = """Translate the following text to English:
 
 {text}"""
 
-RISK_CLASSIFICATION_SYSTEM_PROMPT = """You are an AI triage assistant for a senior emergency alert system.
+DEFAULT_RISK_CLASSIFICATION_SYSTEM_PROMPT_TEMPLATE = """You are an AI triage assistant for a senior emergency alert system.
 Your role is to analyze incoming voice message transcripts and classify the urgency level.
 
 Classify the alert into one of four levels:
@@ -32,6 +32,8 @@ Be conservative - when in doubt between categories, choose UNCERTAIN or NON_URGE
 Below are some examples of past classifications for reference:
 {few_shot_examples}
 """
+
+RISK_CLASSIFICATION_SYSTEM_PROMPT = DEFAULT_RISK_CLASSIFICATION_SYSTEM_PROMPT_TEMPLATE
 
 RISK_CLASSIFICATION_USER_PROMPT = """Analyze this alert transcript:
 
@@ -96,3 +98,16 @@ def map_language_code(lang_code: str | None) -> str:
         "yue": "Cantonese",
     }
     return mapping.get(lang_code or "en", "English")
+
+
+def render_risk_classification_system_prompt(
+    base_template: str,
+    few_shot_examples: str,
+) -> str:
+    template = (base_template or "").strip() or DEFAULT_RISK_CLASSIFICATION_SYSTEM_PROMPT_TEMPLATE
+    if "{few_shot_examples}" not in template:
+        template = (
+            template
+            + "\n\nBelow are some examples of past classifications for reference:\n{few_shot_examples}"
+        )
+    return template.format(few_shot_examples=few_shot_examples)

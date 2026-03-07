@@ -6,7 +6,6 @@ class Senior(BaseModel):
     full_name: str
     phone_number: str
     telegram_user_id: str | None = None
-    button_id: str | None = None
     address: str
     birth_year: int | None = None
     birth_month: int | None = None
@@ -23,6 +22,7 @@ class AlertInsert(BaseModel):
 
 
 class BackendAlertPayload(BaseModel):
+    alert_id: str | None = None
     senior_id: str
     telegram_user_id: str
     channel: str = "telegram"
@@ -39,6 +39,30 @@ class FewShotExample(BaseModel):
     created_at: str | None = None
 
 
+class FewShotExampleUpdate(BaseModel):
+    transcript: str | None = None
+    risk_level: str | None = None
+
+
+class EmergencyContactInsert(BaseModel):
+    senior_id: str
+    name: str
+    relationship: str | None = None
+    phone_number: str | None = None
+    telegram_user_id: str | None = None
+    priority_order: int = 1
+    notify_on_uncertain: bool = False
+
+
+class EmergencyContactUpdate(BaseModel):
+    name: str | None = None
+    relationship: str | None = None
+    phone_number: str | None = None
+    telegram_user_id: str | None = None
+    priority_order: int | None = None
+    notify_on_uncertain: bool | None = None
+
+
 class AlertUpdate(BaseModel):
     risk_level: str | None = None
     risk_score: float | None = None
@@ -48,4 +72,3 @@ class AlertUpdate(BaseModel):
     family_called: bool | None = None
     is_attended: bool | None = None
     is_resolved: bool | None = None
-    operator_notes: str | None = None
