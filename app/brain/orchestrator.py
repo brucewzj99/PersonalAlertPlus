@@ -27,6 +27,13 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Map to DB constraint: Supabase alerts_risk_level_check allows URGENT, NON_URGENT, UNCERTAIN, FALSE_ALARM (uppercase)
+def _risk_level_for_db(raw: str) -> str:
+    allowed = ("URGENT", "NON_URGENT", "UNCERTAIN", "FALSE_ALARM")
+    normalized = (raw or "").strip().upper()
+    return normalized if normalized in allowed else "UNCERTAIN"
+
+
 SENIOR_MESSAGES = {
     "en": {
         "false_alarm": {
@@ -358,9 +365,15 @@ class BrainOrchestrator:
             f"[BrainOrchestrator] Step 8: Updating alert in database (risk: {analysis.risk_level}, requires_operator: {requires_operator})"
         )
         language_detected_db = language_detected or senior.preferred_language or "en"
-        risk_level_db = analysis.risk_level or "UNCERTAIN"
+        raw_risk = (analysis.risk_level or "MEDIUM").lower()
+        risk_level_db = _risk_level_for_db(raw_risk)
+        status_db = status.lower()
+        print(
+            f"[BrainOrchestrator] DEBUG DB write: alert_id={alert_id} risk_level_db={risk_level_db!r} status_db={status_db!r} language_detected_db={language_detected_db!r}"
+        )
         self._update_alert_complete(
             alert_id=alert_id,
+            audio_url=payload.audio_url,
             transcription=content,
             language_detected=language_detected_db,
             translated_text=translated_text,
@@ -659,21 +672,30 @@ class BrainOrchestrator:
         keywords: list[str],
         requires_operator: bool,
         status: str,
+        audio_url: str | None = None,
     ) -> None:
-        self._db.client.table("alerts").update(
-            {
+        # Normalize risk_level for DB: constraint allows URGENT, NON_URGENT, UNCERTAIN, FALSE_ALARM (uppercase)
+        risk_level_normalized = _risk_level_for_db(risk_level or "UNCERTAIN")
+        print(f"[BrainOrchestrator] DEBUG _update_alert_complete: alert_id={alert_id} risk_level={risk_level!r} -> db={risk_level_normalized!r} status={status!r}")
+        update_payload: dict[str, object] = {
                 "transcription": transcription,
                 "language_detected": language_detected,
                 "translated_text": translated_text,
-                "risk_level": risk_level,
+                "risk_level": risk_level_normalized,
                 "risk_score": risk_score,
                 "analysis_summary": analysis_summary,
                 "keywords": keywords,
                 "requires_operator": requires_operator,
                 "status": status,
                 "processing_status": "completed",
+                "processing_error": None,
+                "resolved_by": "ai",
+                "provider_metadata": None,
             }
-        ).eq("id", alert_id).execute()
+        if audio_url is not None:
+            update_payload["audio_url"] = audio_url
+        self._db.client.table("alerts").update(update_payload).eq("id", alert_id).execute()
+        print(f"[BrainOrchestrator] DEBUG Alert updated in Supabase: {alert_id}")
 
     async def _handle_risk_actions(
         self,
