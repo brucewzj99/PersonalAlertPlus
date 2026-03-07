@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Style Preview C: Dark Botanical</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant:wght@400;600&family=IBM+Plex+Sans:wght@300;400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f0f0f;
+            --text-primary: #e8e4df;
+            --text-secondary: #9a9590;
+            --accent-warm: #d4a574;
+            --accent-pink: #e8b4b8;
+            --accent-gold: #c9b896;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'IBM Plex Sans', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        /* Abstract shapes */
+        .shape {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            z-index: 0;
+            opacity: 0.4;
+        }
+
+        .shape-1 {
+            width: 40vh;
+            height: 40vh;
+            background: var(--accent-pink);
+            top: -10vh;
+            right: -10vh;
+            animation: float 10s infinite alternate ease-in-out;
+        }
+
+        .shape-2 {
+            width: 30vh;
+            height: 30vh;
+            background: var(--accent-gold);
+            bottom: -5vh;
+            left: -5vh;
+            animation: float 8s infinite alternate-reverse ease-in-out;
+        }
+
+        .content {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            max-width: 800px;
+        }
+
+        h1 {
+            font-family: 'Cormorant', serif;
+            font-size: clamp(3rem, 12vh, 6rem);
+            font-weight: 600;
+            line-height: 1;
+            margin-bottom: 2rem;
+            opacity: 0;
+            animation: fadeInReveal 1.2s ease-out forwards;
+        }
+
+        .line {
+            width: 1px;
+            height: 0;
+            background-color: var(--accent-warm);
+            margin: 2rem auto;
+            animation: growLine 1s 0.6s ease-out forwards;
+        }
+
+        p {
+            font-size: clamp(1rem, 3vh, 1.5rem);
+            font-weight: 300;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            opacity: 0;
+            animation: fadeIn 1.5s 1s ease-out forwards;
+        }
+
+        @keyframes float {
+            from { transform: translate(0, 0); }
+            to { transform: translate(5vh, 5vh); }
+        }
+
+        @keyframes fadeInReveal {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes growLine {
+            to { height: 100px; }
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="shape shape-1"></div>
+    <div class="shape shape-2"></div>
+    <div class="content">
+        <h1>Personal Alert +</h1>
+        <div class="line"></div>
+        <p>Sophisticated Emergency Response</p>
+    </div>
+</body>
+</html>
