@@ -22,7 +22,7 @@ class BrainAlertResponse(BaseModel):
 
 
 class RiskAnalysis(BaseModel):
-    risk_level: Literal["HIGH", "MEDIUM", "LOW"]
+    risk_level: Literal["URGENT", "NON_URGENT", "UNCERTAIN", "FALSE_ALARM"]
     risk_score: float = Field(ge=0.0, le=1.0)
     reasoning: str
     keywords: list[str]
@@ -49,6 +49,7 @@ class EmergencyContact(BaseModel):
     phone_number: str | None = None
     telegram_user_id: str | None = None
     priority_order: int = 1
+    notify_on_uncertain: bool = False
 
 
 class ProcessingResult(BaseModel):

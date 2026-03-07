@@ -1,9 +1,12 @@
-from telegram.ext import Application, MessageHandler, filters
+from telegram.ext import Application
 
 from app.bot.conversations.registration import build_registration_conversation
-from app.bot.handlers.alerts import handle_text_alert, handle_voice_alert
 from app.bot.handlers.profile import build_profile_conversation
 from app.bot.handlers.escalate import build_escalate_handler
+from app.bot.handlers.conversation import (
+    build_senior_conversation_handler,
+    build_senior_conversation_voice_handler,
+)
 from app.config import get_settings
 from app.services.api_client import BackendApiClient
 from app.services.database import DatabaseService
@@ -22,9 +25,7 @@ def build_bot_application() -> Application:
     application.add_handler(build_registration_conversation())
     application.add_handler(build_profile_conversation())
     application.add_handler(build_escalate_handler())
-    application.add_handler(MessageHandler(filters.VOICE, handle_voice_alert))
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_alert)
-    )
+    application.add_handler(build_senior_conversation_handler())
+    application.add_handler(build_senior_conversation_voice_handler())
 
     return application

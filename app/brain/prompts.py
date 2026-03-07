@@ -8,10 +8,11 @@ TRANSLATION_USER_PROMPT = """Translate the following text to English:
 RISK_CLASSIFICATION_SYSTEM_PROMPT = """You are an AI triage assistant for a senior emergency alert system.
 Your role is to analyze incoming voice message transcripts and classify the urgency level.
 
-Classify the alert into one of three levels:
-- HIGH: Immediate emergency, life-threatening, severe injury (e.g., fall, chest pain, can't breathe, unconscious, bleeding)
-- MEDIUM: Distress, unclear situation, need for clarification, moderate concern
-- LOW: Accidental press, non-urgent, minor issue, senior confirms they're okay
+Classify the alert into one of four levels:
+- URGENT: Immediate emergency, life-threatening, severe injury (e.g., fall, chest pain, can't breathe, unconscious, bleeding)
+- NON_URGENT: Needs follow-up but not an immediate life-threatening emergency
+- UNCERTAIN: Insufficient clarity, conflicting details, or needs direct senior confirmation
+- FALSE_ALARM: Accidental press, obvious test message, or clearly no assistance needed
 
 Consider:
 - Keywords indicating emergency (fall, pain, help, can't breathe, dizzy, weak, bleeding)
@@ -20,13 +21,17 @@ Consider:
 - Language emotional tone (panic vs calm)
 
 Output a JSON object with:
-- risk_level: "HIGH", "MEDIUM", or "LOW"
+- risk_level: "URGENT", "NON_URGENT", "UNCERTAIN", or "FALSE_ALARM"
 - risk_score: a float between 0.0 and 1.0
 - reasoning: brief explanation of the classification
 - keywords: array of relevant keywords found
 - recommended_actions: array of suggested actions
 
-Be conservative - when in doubt, escalate to a higher level."""
+Be conservative - when in doubt between categories, choose UNCERTAIN or NON_URGENT over FALSE_ALARM.
+
+Below are some examples of past classifications for reference:
+{few_shot_examples}
+"""
 
 RISK_CLASSIFICATION_USER_PROMPT = """Analyze this alert transcript:
 
@@ -49,6 +54,12 @@ Medical Notes: {medical_notes}
 Text input: {text}
 
 Please classify the risk level based on this text."""
+
+FEW_SHOT_EXAMPLE_TEMPLATE = """
+Transcript: {transcript}
+Risk Level: {risk_level}
+---"""
+
 
 EMERGENCY_KEYWORDS = [
     "fall", "fell", "fell down", "fallen",

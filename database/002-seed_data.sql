@@ -49,9 +49,10 @@ insert into public.emergency_contacts (
   relationship,
   phone_number,
   telegram_user_id,
-  priority_order
+  priority_order,
+  notify_on_uncertain
 )
-select id, 'Tan Wei Ming', 'Son', '+6588881111', 'tg_weiming', 1
+select id, 'Tan Wei Ming', 'Son', '+6588881111', 'tg_weiming', 1, true
 from public.seniors where full_name = 'Tan Ah Kow';
 
 insert into public.emergency_contacts (
@@ -60,16 +61,17 @@ insert into public.emergency_contacts (
   relationship,
   phone_number,
   telegram_user_id,
-  priority_order
+  priority_order,
+  notify_on_uncertain
 )
-select id, 'Nur Aisyah', 'Daughter', '+6588882222', 'tg_aisyah', 1
+select id, 'Nur Aisyah', 'Daughter', '+6588882222', 'tg_aisyah', 1, false
 from public.seniors where full_name = 'Mdm Siti Rahmah';
 
 --------------------------------------------------
 -- 3️⃣ SEED ALERTS
 --------------------------------------------------
 
--- LOW RISK example
+-- FALSE ALARM example
 insert into public.alerts (
   id,
   senior_id,
@@ -90,7 +92,7 @@ select
   'https://storage.supabase.co/audio/sample_low.mp3',
   'Hello I pressed by mistake, I am okay.',
   'English',
-  'LOW',
+  'FALSE_ALARM',
   0.15,
   'closed',
   false,
@@ -98,7 +100,7 @@ select
 from public.seniors where full_name = 'Tan Ah Kow';
 
 
--- HIGH RISK example
+-- URGENT example
 insert into public.alerts (
   id,
   senior_id,
@@ -119,7 +121,7 @@ select
   'https://storage.supabase.co/audio/sample_high.mp3',
   'I fell down and cannot get up. Very pain.',
   'English',
-  'HIGH',
+  'URGENT',
   0.94,
   'escalated',
   true,
@@ -130,7 +132,7 @@ from public.seniors where full_name = 'Mdm Siti Rahmah';
 -- 4️⃣ SEED AI ACTIONS
 --------------------------------------------------
 
--- LOW RISK AI actions
+-- FALSE ALARM AI actions
 insert into public.ai_actions (
   alert_id,
   action_type,
@@ -141,9 +143,9 @@ select
   a.id,
   'notify_family',
   'success',
-  jsonb_build_object('method','telegram','message','Low risk detected. Senior confirmed safe.')
+  jsonb_build_object('method','telegram','message','False alarm detected. Senior confirmed safe.')
 from public.alerts a
-where a.risk_level = 'LOW';
+where a.risk_level = 'FALSE_ALARM';
 
 insert into public.ai_actions (
   alert_id,
@@ -157,10 +159,10 @@ select
   'success',
   jsonb_build_object('call_status','answered','response','Senior confirmed safe.')
 from public.alerts a
-where a.risk_level = 'LOW';
+where a.risk_level = 'FALSE_ALARM';
 
 
--- HIGH RISK AI action
+-- URGENT AI action
 insert into public.ai_actions (
   alert_id,
   action_type,
@@ -171,9 +173,9 @@ select
   a.id,
   'escalate_to_operator',
   'success',
-  jsonb_build_object('reason','High confidence fall detection')
+  jsonb_build_object('reason','Urgent confidence fall detection')
 from public.alerts a
-where a.risk_level = 'HIGH';
+where a.risk_level = 'URGENT';
 
 --------------------------------------------------
 -- 5️⃣ SEED OPERATOR ACTION
@@ -197,4 +199,4 @@ select
   5,
   false
 from public.alerts a
-where a.risk_level = 'HIGH';
+where a.risk_level = 'URGENT';

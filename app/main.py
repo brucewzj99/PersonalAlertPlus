@@ -1,16 +1,34 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from telegram import Update
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.bot.application import build_bot_application
 from app.brain.router import router as brain_router, set_telegram_bot
+from app.api.v1.operator import router as operator_router
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 telegram_app = build_bot_application()
+scheduler = AsyncIOScheduler()
+
+
+async def run_conversation_timeout_check():
+    """Run timeout check for active conversations."""
+    try:
+        from app.brain.services.conversation_timeout import ConversationTimeoutHandler
+        handler = ConversationTimeoutHandler()
+        results = handler.check_and_timeout_conversations(timeout_minutes=1)
+        if results:
+            logger.info(f"Timeout check: {len(results)} conversations timed out")
+    except Exception as e:
+        logger.error(f"Error in timeout check: {e}")
 
 
 @asynccontextmanager
@@ -18,6 +36,16 @@ async def lifespan(_: FastAPI):
     await telegram_app.initialize()
     await telegram_app.start()
     set_telegram_bot(telegram_app.bot)
+
+    scheduler.add_job(
+        run_conversation_timeout_check,
+        "interval",
+        seconds=30,
+        id="conversation_timeout_check",
+    )
+    scheduler.start()
+    logger.info("Started conversation timeout scheduler (every 30 seconds)")
+
     if settings.bot_mode == "webhook":
         if not settings.bot_webhook_url:
             raise RuntimeError("BOT_WEBHOOK_URL is required when BOT_MODE=webhook")
@@ -32,6 +60,7 @@ async def lifespan(_: FastAPI):
             raise RuntimeError("Polling mode requires an updater-enabled application")
         await telegram_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     yield
+    scheduler.shutdown()
     if settings.bot_mode == "webhook":
         await telegram_app.bot.delete_webhook()
     else:
@@ -45,6 +74,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="PersonalAlertPlus Bot API", lifespan=lifespan)
 
 app.include_router(brain_router)
+app.include_router(operator_router)
 
 
 @app.get("/health")
