@@ -33,10 +33,10 @@ def get_orchestrator() -> BrainOrchestrator:
 async def ingest_alert(payload: BrainAlertPayload) -> BrainAlertResponse:
     """Ingest and process a new alert from the Telegram bot."""
     print(f"Received alert payload: {payload}")
-    if not payload.audio_url and not payload.text:
+    if not payload.audio_url and not payload.audio_base64 and not payload.text:
         raise HTTPException(
             status_code=400,
-            detail="Either audio_url or text must be provided",
+            detail="Either audio_url, audio_base64, or text must be provided",
         )
 
     orchestrator = get_orchestrator()

@@ -15,6 +15,7 @@ class OpenAICompatibleClient:
         settings = get_settings()
         self.base_url = settings.ai_api_base_url
         self.api_key = settings.ai_api_key
+        self.api_key_stt = settings.ai_api_key_stt or settings.ai_api_key
         self.chat_model = settings.ai_chat_model
         self.transcription_model = settings.ai_transcription_model
         self.base_url_stt = settings.ai_api_base_url_stt
@@ -40,7 +41,7 @@ class OpenAICompatibleClient:
             "model": self.transcription_model,
             "response_format": "json",
         }
-        headers = {"Authorization": f"Bearer {self.api_key}"}
+        headers = {"Authorization": f"Bearer {self.api_key_stt}"}
 
         async with httpx.AsyncClient(timeout=self.timeout * 2) as client:
             response = await client.post(
@@ -54,6 +55,32 @@ class OpenAICompatibleClient:
             transcript = result.get("text", "").strip()
             language = result.get("language", None)
             return transcript, language
+
+    @retry(
+        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
+    )
+    async def translate_audio_to_english(self, audio_bytes: bytes) -> str:
+        """Translate audio to English using Whisper translations endpoint (e.g. Groq).
+        Use when language was detected as non-English; returns English text only."""
+        files = {
+            "file": ("audio.ogg", audio_bytes, "audio/ogg"),
+        }
+        data = {
+            "model": self.transcription_model,
+            "response_format": "json",
+        }
+        headers = {"Authorization": f"Bearer {self.api_key_stt}"}
+
+        async with httpx.AsyncClient(timeout=self.timeout * 2) as client:
+            response = await client.post(
+                f"{self.base_url_stt}/audio/translations",
+                files=files,
+                data=data,
+                headers=headers,
+            )
+            response.raise_for_status()
+            result = response.json()
+            return (result.get("text") or "").strip()
 
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
@@ -153,6 +180,10 @@ class OpenAICompatibleClient:
                 json=payload,
                 headers=headers,
             )
+            if response.status_code == 401:
+                raise ValueError(
+                    "Chat API returned 401 Unauthorized. Check AI_API_KEY in .env (e.g. OpenRouter key from https://openrouter.ai/keys). Restart the app after changing .env."
+                )
             response.raise_for_status()
             result = response.json()
             return result["choices"][0]["message"]["content"]

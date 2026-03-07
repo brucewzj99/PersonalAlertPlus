@@ -27,4 +27,6 @@ class BackendAlertPayload(BaseModel):
     telegram_user_id: str
     channel: str = "telegram"
     audio_url: str | None = None
+    """Optional: voice recording as base64 (e.g. from Telegram). Used for Groq transcription when present."""
+    audio_base64: str | None = None
     text: str | None = None

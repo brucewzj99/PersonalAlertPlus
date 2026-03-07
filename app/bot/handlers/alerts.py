@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -59,9 +61,16 @@ async def handle_voice_alert(
     try:
         voice_file = await context.bot.get_file(update.message.voice.file_id)
         voice_data = await voice_file.download_as_bytearray()
-        audio_url = storage.upload_voice(
-            telegram_user_id=telegram_user_id, data=bytes(voice_data)
-        )
+        audio_bytes = bytes(voice_data)
+        audio_base64 = base64.b64encode(audio_bytes).decode("ascii")
+
+        audio_url = None
+        try:
+            audio_url = storage.upload_voice(
+                telegram_user_id=telegram_user_id, data=audio_bytes
+            )
+        except Exception:
+            pass
 
         db.create_alert(
             AlertInsert(senior_id=senior.id, channel="telegram", audio_url=audio_url)
@@ -72,7 +81,9 @@ async def handle_voice_alert(
             telegram_user_id=telegram_user_id,
             channel="telegram",
             audio_url=audio_url,
+            audio_base64=audio_base64,
         )
         await api_client.send_alert(payload)
-    except Exception:
+    except Exception as e:
+        print(f"Error occurred while handling voice alert: {e}")
         await update.message.reply_text(t(senior.preferred_language, "failed_alert"))

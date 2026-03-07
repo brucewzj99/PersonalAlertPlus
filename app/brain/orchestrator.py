@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 
 from telegram import Bot
@@ -14,6 +15,7 @@ from app.brain.schemas import (
 )
 from app.brain.providers.openai_compatible import OpenAICompatibleClient
 from app.brain.services.audio_fetcher import AudioFetcher
+from app.brain.services.speech_to_text import process_audio as speech_to_text_process_audio
 from app.brain.services.risk_engine import RiskEngine
 from app.brain.services.notification_service import NotificationService
 from app.brain.services.action_logger import ActionLogger
@@ -200,23 +202,34 @@ class BrainOrchestrator:
         content = payload.text
         language_detected = None
 
-        if payload.audio_url:
-            print("[BrainOrchestrator] Step 3a: Processing voice message...")
+        has_voice = bool(payload.audio_base64 or payload.audio_url)
+        if has_voice:
+            print("[BrainOrchestrator] Step 3a: Processing voice message (detect → transcribe/translate)...")
             try:
-                print(f"[BrainOrchestrator] Fetching audio from: {payload.audio_url}")
-                audio_bytes = await self._audio_fetcher.fetch_audio_bytes(
-                    payload.audio_url
+                if payload.audio_base64:
+                    audio_bytes = base64.b64decode(payload.audio_base64)
+                    print(f"[BrainOrchestrator] Using inline audio from Telegram ({len(audio_bytes)} bytes), running speech-to-text...")
+                else:
+                    print(f"[BrainOrchestrator] Fetching audio from: {payload.audio_url}")
+                    audio_bytes = await self._audio_fetcher.fetch_audio_bytes(
+                        payload.audio_url
+                    )
+                    print(
+                        f"[BrainOrchestrator] Audio fetched ({len(audio_bytes)} bytes), running speech-to-text..."
+                    )
+                stt_result = await speech_to_text_process_audio(
+                    self._ai_client,
+                    audio_bytes,
+                    preferred_language_hint=senior.preferred_language,
                 )
+                content = stt_result.transcript
+                language_detected = stt_result.language_detected
+                translated_text = stt_result.translated_text
                 print(
-                    f"[BrainOrchestrator] Audio fetched ({len(audio_bytes)} bytes), transcribing..."
+                    f"[BrainOrchestrator] Transcription: '{content}' (lang: {language_detected}, translated: {bool(translated_text)})"
                 )
-                transcript, language_detected = await self._ai_client.transcribe_audio(
-                    audio_bytes
-                )
-                print(
-                    f"[BrainOrchestrator] Transcription complete: '{transcript}' (lang: {language_detected})"
-                )
-                content = transcript
+                if translated_text:
+                    print(f"[BrainOrchestrator] English text: '{translated_text}'")
 
                 self._action_logger.log_transcription(
                     alert_id=alert_id,
@@ -242,6 +255,7 @@ class BrainOrchestrator:
                     )
         else:
             print("[BrainOrchestrator] Step 3b: Processing text message...")
+            translated_text = None
 
         if not content:
             print("[BrainOrchestrator] ERROR: No content to analyze")
@@ -252,28 +266,13 @@ class BrainOrchestrator:
             )
 
         print(
-            f"[BrainOrchestrator] Step 4: Language detection (preferred: {senior.preferred_language})"
+            f"[BrainOrchestrator] Step 4: Language (detected: {language_detected}, preferred: {senior.preferred_language})"
         )
-        source_language = map_language_code(senior.preferred_language)
-        translated_text = None
-
-        if language_detected and language_detected.lower() != "en":
-            print(
-                f"[BrainOrchestrator] Step 5: Translating from {language_detected} to English..."
-            )
-            try:
-                translated_text = await self._ai_client.translate_text(
-                    content, source_language
-                )
-                print(f"[BrainOrchestrator] Translation complete: '{translated_text}'")
-            except Exception as e:
-                logger.warning(f"Translation failed: {e}")
-                print(
-                    f"[BrainOrchestrator] Translation FAILED: {e}, using original text"
-                )
-                translated_text = content
-        elif language_detected:
-            source_language = language_detected
+        source_language = (
+            map_language_code(language_detected or senior.preferred_language)
+            or language_detected
+            or map_language_code(senior.preferred_language)
+        )
 
         print(
             f"[BrainOrchestrator] Step 6: Risk classification (text: '{translated_text or content}')..."
@@ -316,22 +315,25 @@ class BrainOrchestrator:
         print(f"[BrainOrchestrator] Summary generated")
 
         requires_operator = analysis.risk_level in ["HIGH", "MEDIUM"]
-        status = "escalated" if analysis.risk_level == "HIGH" else "pending"
+        status_value = "escalated" if analysis.risk_level == "HIGH" else "pending"
 
         print(
             f"[BrainOrchestrator] Step 8: Updating alert in database (risk: {analysis.risk_level}, requires_operator: {requires_operator})"
         )
+        language_detected_db = language_detected or senior.preferred_language or "en"
+        risk_level_db = (analysis.risk_level or "MEDIUM").lower()
+        status_db = status_value.lower()
         self._update_alert_complete(
             alert_id=alert_id,
             transcription=content,
-            language_detected=source_language,
+            language_detected=language_detected_db,
             translated_text=translated_text,
-            risk_level=analysis.risk_level,
+            risk_level=risk_level_db,
             risk_score=analysis.risk_score,
             analysis_summary=summary,
             keywords=analysis.keywords,
             requires_operator=requires_operator,
-            status=status,
+            status=status_db,
         )
 
         print(

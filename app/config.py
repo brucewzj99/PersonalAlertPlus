@@ -1,5 +1,5 @@
 from functools import lru_cache
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,7 +27,19 @@ class Settings(BaseSettings):
         default="https://api.openai.com/v1", alias="AI_API_BASE_URL_STT"
     )
     ai_api_key: str = Field(alias="AI_API_KEY")
+    ai_api_key_stt: str | None = Field(
+        default=None,
+        alias="AI_API_KEY_STT",
+        description="Optional key for STT/translation (e.g. Groq). If set, used for transcription/translation instead of AI_API_KEY.",
+    )
     ai_chat_model: str = Field(default="gpt-4o-mini", alias="AI_CHAT_MODEL")
+
+    @field_validator("ai_api_key", "ai_api_key_stt", mode="before")
+    @classmethod
+    def strip_api_key(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip() if isinstance(v, str) else v
     ai_transcription_model: str = Field(
         default="whisper-1", alias="AI_TRANSCRIPTION_MODEL"
     )
