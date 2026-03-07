@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, cast
 
 from telegram import Update
@@ -19,6 +20,25 @@ from app.brain.services.speech_to_text import process_audio as speech_to_text_pr
 logger = logging.getLogger(__name__)
 
 CONVERSATION_EXPIRY_MINUTES = 30
+
+CONVERSATION_ACK_MESSAGES: dict[str, str] = {
+    "en": "Thank you for your response. We have received your message and will use this information to help you.",
+    "zh": "感谢您的回复。我们已收到您的信息，并将使用这些信息来帮助您。",
+    "ms": "Terima kasih atas respons anda. Kami telah menerima mesej anda dan akan menggunakan maklumat ini untuk membantu anda.",
+    "ta": "உங்கள் பதிலுக்கு நன்றி. உங்கள் செய்தியைப் பெற்றுள்ளோம்; உங்களுக்கு உதவ இந்த தகவலை பயன்படுத்துவோம்.",
+    "nan": "感谢你的回复。阮已经收到你的信息，会用这些信息来帮助你。",
+    "yue": "多谢你嘅回复。我哋已经收到你嘅message，会用呢啲信息帮你。",
+}
+
+
+def _get_conversation_ack_audio_path(language: str) -> Path | None:
+    lang = language if language in CONVERSATION_ACK_MESSAGES else "en"
+    audio_dir = Path(__file__).resolve().parents[3] / "assets" / "audio" / lang
+    for filename in ("conversation_thank_you.mp3", "synthesize.mp3"):
+        path = audio_dir / filename
+        if path.exists():
+            return path
+    return None
 
 
 def _first_dict_row(data: object) -> dict[str, Any] | None:
@@ -47,7 +67,7 @@ async def handle_senior_conversation_reply(update: Update, context: ContextTypes
         return False
 
     senior_id = str(senior["id"])
-    lang = senior.get("preferred_language", "en")
+    lang = str(senior.get("preferred_language") or "en").lower()
 
     try:
         active_conversations = db.client.table("senior_conversations").select("*").eq("senior_id", senior_id).eq("status", "active").execute()
@@ -152,17 +172,18 @@ async def handle_senior_conversation_reply(update: Update, context: ContextTypes
         }
     ).eq("id", alert_id).execute()
 
-    ack_messages = {
-        "en": "Thank you for your response. We have received your message and will use this information to help you.",
-        "zh": "感谢您的回复。我们已收到您的信息，并将使用这些信息来帮助您。",
-        "ms": "Terima kasih atas respons anda. Kami telah menerima mesej anda dan akan menggunakan maklumat ini untuk membantu anda.",
-        "ta": "உங்கள் பதிலுக்கு நன்றி. உங்கள் செய்தியைப் பெற்றுள்ளோம் உதவி.",
-        "nan": "感谢你的回复。阮已经收到你的信息，会用这些信息来帮助你。",
-        "yue": "多谢你嘅回复。我哋已经收到你嘅message，会用呢啲信息帮你。",
-    }
-
-    ack_text = ack_messages.get(lang, ack_messages["en"])
-    await update.message.reply_text(f"✅ {ack_text}")
+    ack_text = CONVERSATION_ACK_MESSAGES.get(lang, CONVERSATION_ACK_MESSAGES["en"])
+    ack_audio_path = _get_conversation_ack_audio_path(lang)
+    if ack_audio_path is not None:
+        with open(ack_audio_path, "rb") as audio_file:
+            await context.bot.send_voice(
+                chat_id=str(user.id),
+                voice=audio_file,
+                caption=f"✅ {ack_text}",
+            )
+    else:
+        logger.warning("Missing conversation acknowledgement audio for language '%s'", lang)
+        await update.message.reply_text(f"✅ {ack_text}")
 
     logger.info(
         f"Senior reply captured for alert {alert_id}: {message_en[:100] if message_en else '(voice)'}"

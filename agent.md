@@ -97,6 +97,8 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
 
   * Reply to senior with bilingual confirmation message
   * Show inline buttons: "I am okay" and "Escalate"
+  * Create a short follow-up conversation window for senior replies
+  * Notify only contacts with `notify_on_uncertain = true`
   * If senior escalates, route to NON_URGENT flow and notify family
 
 * NON_URGENT
@@ -104,12 +106,19 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * Notify family
   * Escalate to operations as NON_URGENT
   * Mark case for operator follow-up
+  * Ask senior for extra details via follow-up prompt with a "Skip" button
 
 * URGENT
 
   * Notify family immediately
   * Escalate to operations as URGENT priority
   * Mark case for urgent operator handling
+  * Ask senior for extra details via follow-up prompt with a "Skip" button
+
+* Follow-up timeout safety net
+
+  * Active follow-up conversations are checked every 5 seconds
+  * If an UNCERTAIN conversation times out, system triggers a Twilio check-in voice call
 
 * AI assists. Humans decide.
 
@@ -128,7 +137,10 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * View senior medical notes during contact management
   * Edit base AI risk prompt in a Settings tab
   * Log structured case actions (dispatch ambulance / call family / mark attended) with explicit action timestamps
+  * Choose dispatch destination when logging `dispatch_ambulance`
   * Select contacted family members as multi-select pill options when logging `call_family`
+  * Review senior follow-up replies (including translated text and voice attachments)
+  * Send multilingual senior updates when operator logs key actions (family called / response dispatched / attended)
 
 * This builds a supervised AI improvement cycle.
 
@@ -140,7 +152,9 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
 
   * Telegram Bot → Senior trigger channel
   * FastAPI Backend → AI processing & orchestration
+  * Conversation Timeout Scheduler → periodic timeout checks (`senior_conversations`)
   * Supabase (Postgres + RLS) → Secure data storage
+  * Twilio → SMS fallback + timeout safety check-in calls
   * React + Vite Dashboard → Operator interface
   * (Optional) ClickHouse → Analytics layer
 
@@ -192,10 +206,21 @@ After AI processing, seniors receive a confirmation message:
 - Written in their **native language** + **English**
 - For UNCERTAIN risk: includes "I am okay" and "Escalate" inline buttons
 - For FALSE_ALARM risk: includes "Escalate" inline button
+- For URGENT/NON_URGENT risk: includes follow-up prompt + "Skip" button
 - When senior clicks "Escalate":
   - Alert is escalated to NON_URGENT
   - Emergency contacts are notified immediately
   - Alert marked for operator review
+
+### Senior Follow-Up Conversation
+
+- For UNCERTAIN, URGENT, and NON_URGENT, system opens a `senior_conversations` record
+- Senior can reply in text or voice; voice replies are transcribed and translated to English for operators
+- Senior can explicitly skip via callback (`skip_follow_up:{alert_id}`)
+- If no reply arrives before timeout:
+  - conversation is marked as `timeout`
+  - for UNCERTAIN only, system triggers a Twilio safety check-in call
+  - timeout and call outcomes are logged in `ai_actions`
 
 This provides a safety net in case AI misclassifies the situation.
 
@@ -205,7 +230,7 @@ This provides a safety net in case AI misclassifies the situation.
 
 ### Step 1 – Trigger
 
-* Senior sends Telegram voice message.
+* Senior sends Telegram voice or text message.
 
 ### Step 2 – Ingestion
 
@@ -226,9 +251,18 @@ This provides a safety net in case AI misclassifies the situation.
 ### Step 4 – AI Decision
 
 * FALSE_ALARM → Reply with apology + Escalate option
-* UNCERTAIN → Ask for confirmation from senior ("I am okay" / "Escalate")
-* NON_URGENT → Notify family + escalate to operator as NON_URGENT
-* URGENT → Notify family + escalate to operator as URGENT priority
+* UNCERTAIN → Ask for confirmation ("I am okay" / "Escalate") + open follow-up conversation
+* NON_URGENT → Notify family + escalate to operator as NON_URGENT + request follow-up details ("Skip" available)
+* URGENT → Notify family + escalate to operator as URGENT priority + request follow-up details ("Skip" available)
+
+### Step 4b – Follow-Up Timeout Safety Net
+
+* Scheduler checks active conversations every 5 seconds
+* If UNCERTAIN follow-up times out:
+
+  * Mark conversation as `timeout`
+  * Trigger Twilio check-in voice call
+  * Log timeout/call actions to `ai_actions`
 
 ### Step 5 – Operator Review
 
@@ -255,126 +289,66 @@ This provides a safety net in case AI misclassifies the situation.
 
 ```mermaid
 flowchart TD
+A1[Senior sends voice/text] --> A2[Telegram bot handlers]
+A2 --> A3[Create alert row in alerts]
+A2 --> A4[POST /api/v1/brain/alerts/ingest]
 
-%% ==============================
-%% TELEGRAM BOT / TRIGGER LAYER
-%% ==============================
+A4 --> B1[BrainOrchestrator]
+B1 --> B2[Load senior + emergency contacts]
+B1 --> B3[Transcribe/translate if needed]
+B1 --> B4[Classify risk + guardrails]
+B1 --> B5[Update alerts with risk + ai_assessment]
 
-subgraph Telegram_Bot_Layer
-    A1[Senior sends Voice or Text Message]
-    A2[Telegram Bot Webhook]
-    A1 --> A2
+B4 --> C1{Risk level}
+C1 -->|URGENT| C2[Notify contacts + escalate]
+C1 -->|NON_URGENT| C3[Notify contacts + escalate]
+C1 -->|UNCERTAIN| C4[Notify only contacts flagged notify_on_uncertain]
+C1 -->|FALSE_ALARM| C5[No default contact notification]
+
+C2 --> D1[Send senior follow-up audio + Skip button]
+C3 --> D1
+C4 --> D2[Send senior confirmation buttons: I am okay / Escalate]
+C5 --> D3[Send senior Escalate button]
+
+D1 --> E1[Create senior_conversations active]
+D2 --> E1
+
+E1 --> F1[Senior sends text/voice follow-up]
+F1 --> F2[Store translated reply + optional audio URL]
+F2 --> F3[Set requires_operator true]
+
+E1 --> G1[Scheduler checks timeout every 5s]
+G1 -->|UNCERTAIN timeout| G2[Mark timeout + trigger Twilio check-in call]
+G1 -->|Other timeout| G3[Mark timeout only]
+
+H1[Operator dashboard override/close] --> H2[PATCH /api/v1/operator/alerts/{id}/override]
+H2 --> H3[Insert rows into operator_actions]
+H2 --> H4[Optional senior operator-action update voice/text]
+
+subgraph Supabase
+  S1[(seniors)]
+  S2[(emergency_contacts)]
+  S3[(alerts)]
+  S4[(ai_actions)]
+  S5[(operator_actions)]
+  S6[(senior_conversations)]
+  S7[(few_shot_examples)]
+  S8[(prompt_settings)]
 end
 
-%% ==============================
-%% BACKEND - MAIN BRAIN
-%% ==============================
-
-subgraph Backend_Main_Brain
-    B1[Receive Alert Request]
-    B2{Is Input Voice?}
-    B3[Voice-to-Text Engine]
-    B4[Raw Text]
-    B5{Language English?}
-    B6[Translate to English]
-    B7[English Normalized Text]
-    B8[Sentiment + Risk Analysis]
-    B9{Risk Level?}
-    
-    %% Risk branches
-    B10[URGENT Handler]
-    B11[NON_URGENT Handler]
-    B12[UNCERTAIN Handler]
-    B18[FALSE_ALARM Handler]
-
-    %% Actions
-    B13[Generate AI Summary for Operator]
-    B14[Notify Operator Dashboard]
-    B15[Notify Family]
-    B19[Reply to Senior]
-    B16[Automated Call to Senior]
-    B17[Optional IoT Check]
-end
-
-%% ==============================
-%% FRONTEND - OPERATOR DASHBOARD
-%% ==============================
-
-subgraph Frontend_Operator_Dashboard
-    C1[Live Alert Feed]
-    C2[View AI Summary + Risk Score]
-    C3[Operator Decision]
-    C4[Override or Confirm Action]
-end
-
-%% ==============================
-%% DATABASE
-%% ==============================
-
-subgraph Database
-    D1[(Seniors)]
-    D2[(Emergency Contacts)]
-    D3[(Alerts)]
-    D4[(AI Actions)]
-    D5[(Operator Actions)]
-end
-
-%% ==============================
-%% DATA FLOW
-%% ==============================
-
-A2 --> B1
-B1 --> B2
-
-B2 -->|Yes| B3
-B2 -->|No| B4
-
-B3 --> B4
-B4 --> B5
-
-B5 -->|No| B6
-B5 -->|Yes| B7
-
-B6 --> B7
-B7 --> B8
-B8 --> B9
-
-%% Risk routing
-B9 -->|URGENT| B10
-B9 -->|NON_URGENT| B11
-B9 -->|UNCERTAIN| B12
-B9 -->|FALSE_ALARM| B18
-
-%% URGENT
-B10 --> B13
-B10 --> B15
-B13 --> B14
-
-%% NON_URGENT
-B11 --> B15
-B11 --> B14
-
-%% UNCERTAIN / FALSE_ALARM
-B12 --> B19
-B18 --> B19
-
-%% Optional IoT
-B11 --> B17
-B10 --> B17
-
-%% Operator Flow
-B14 --> C1
-C1 --> C2
-C2 --> C3
-C3 --> C4
-
-%% DB Writes
-B1 --> D3
-B8 --> D4
-C4 --> D5
-B15 --> D4
-B16 --> D4
-B19 --> D4
+B2 --> S1
+B2 --> S2
+A3 --> S3
+B5 --> S3
+C2 --> S4
+C3 --> S4
+C4 --> S4
+C5 --> S4
+F2 --> S4
+F2 --> S6
+G2 --> S4
+G3 --> S6
+H3 --> S5
 ```
 
 ### Bot → Backend API Payload
@@ -387,8 +361,9 @@ When the bot receives an alert, it sends this payload to the backend:
   "senior_id": "uuid",
   "telegram_user_id": "string",
   "channel": "telegram",
-  "audio_url": "https://...",
-  "text": "string"
+  "audio_url": "https://... (optional)",
+  "audio_base64": "optional-base64 (optional)",
+  "text": "string (optional)"
 }
 ```
 
@@ -477,12 +452,14 @@ Emergency alerts triggered by seniors.
 | keywords | jsonb | No | Array of keywords extracted |
 | status | text | No | pending/pending_confirmation/escalated/closed |
 | requires_operator | boolean | No | Whether operator intervention needed |
+| senior_response | text | No | Latest English-normalized follow-up response from senior |
+| is_resolved | boolean | No | Whether case is resolved/closed |
 | resolved_by | text | No | Who resolved (ai/operator) |
 | processing_status | text | No | pending/processing/completed/failed |
 | processing_error | text | No | Error message if processing failed |
 | created_at | timestamptz | Yes | Alert creation timestamp |
 
-* Note: operator intervention details are modeled in `public.operator_actions` as generic action rows with timestamps and payload metadata.
+* Note: operator intervention details are modeled in `public.operator_actions` as generic action rows with timestamps and payload metadata. Legacy action booleans may still exist in transitional environments, but the app treats `operator_actions` as source of truth.
 
 ---
 
@@ -494,7 +471,7 @@ Automated AI-triggered actions based on risk assessment.
 |-------|------|----------|-------------|
 | id | uuid | Yes | Auto-generated primary key |
 | alert_id | uuid | Yes | Foreign key to alerts(id) |
-| action_type | text | Yes | Type of action (notify_family/escalate/call_senior/senior_escalated) |
+| action_type | text | Yes | Type of action (e.g. notify_family, senior_escalated_to_non_urgent, senior_conversation_reply, conversation_timeout, checkin_call) |
 | action_status | text | No | pending/success/failed (default: pending) |
 | details | jsonb | No | Action-specific data (method, message, etc) |
 | provider | text | No | Provider used (e.g., telegram, twilio, openai) |
@@ -521,7 +498,25 @@ Generic operator action log for each case.
 
 ---
 
-### 6.6 🔐 Security Model
+### 6.6 💬 Senior Conversations Table (`public.senior_conversations`)
+
+Tracks follow-up conversation windows opened after AI decisions.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | uuid | Yes | Auto-generated primary key |
+| senior_id | uuid | Yes | Foreign key to seniors(id) |
+| alert_id | uuid | Yes | Foreign key to alerts(id) |
+| status | text | Yes | active/completed/timeout |
+| senior_response | text | No | Final normalized senior response text |
+| started_at | timestamptz | Yes | Conversation start time |
+| ended_at | timestamptz | No | Conversation completion/timeout time |
+| updated_at | timestamptz | Yes | Auto-updated timestamp |
+| created_at | timestamptz | Yes | Row creation timestamp |
+
+---
+
+### 6.7 🔐 Security Model
 
   * Seniors have no direct DB access
   * Backend uses Supabase service role
@@ -572,7 +567,7 @@ Generic operator action log for each case.
 
   * UNCERTAIN risk (0.45)
   * Senior receives "I am okay" + "Escalate" buttons
-  * No family notification unless escalation is requested
+  * Contacts flagged with `notify_on_uncertain` may be notified
   * If senior clicks escalate → move to NON_URGENT and notify family
 
 ### 🟠 Follow-up Needed (NON_URGENT)
@@ -628,5 +623,5 @@ Generic operator action log for each case.
 * Integration with emergency dispatch APIs
 * SMS fallback channel (implemented)
 * Caregiver mobile app
-* Automated follow-up call to senior (deferred from hackathon)
+* Twilio call-response webhook handling for check-in keypad responses
 * Multi-language operator dashboard

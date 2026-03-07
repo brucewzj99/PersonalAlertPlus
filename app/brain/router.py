@@ -72,12 +72,12 @@ async def brain_health_check() -> BrainHealthResponse:
 
 
 @router.post("/conversations/check-timeout")
-async def check_conversation_timeout(timeout_minutes: int = 1):
+async def check_conversation_timeout(timeout_seconds: int = 60):
     """Check for timed-out conversations and trigger check-in calls."""
     from app.brain.services.conversation_timeout import ConversationTimeoutHandler
 
     handler = ConversationTimeoutHandler()
-    results = handler.check_and_timeout_conversations(timeout_minutes=timeout_minutes)
+    results = handler.check_and_timeout_conversations(timeout_seconds=timeout_seconds)
     return {
         "checked_at": datetime.now(timezone.utc).isoformat(),
         "timed_out_count": len(results),

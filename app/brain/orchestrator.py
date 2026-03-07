@@ -447,7 +447,7 @@ class BrainOrchestrator:
         send_check_in = analysis.risk_level == "UNCERTAIN"
         send_need_info = analysis.risk_level in ["URGENT", "NON_URGENT"]
 
-        if send_need_info and alert_id:
+        if (send_need_info or send_check_in) and alert_id:
             self._db.client.table("senior_conversations").insert(
                 {
                     "senior_id": senior.id,
@@ -573,6 +573,28 @@ class BrainOrchestrator:
                     ]
                 ]
             )
+        elif risk_key in ["urgent", "non_urgent"] and alert_id:
+            skip_text = {
+                "en": "Skip",
+                "zh": "跳过",
+                "ms": "Langkau",
+                "ta": "Skip",
+                "nan": "跳过",
+                "yue": "跳过",
+            }
+
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            inline_keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            skip_text.get(lang, skip_text["en"]),
+                            callback_data=f"skip_follow_up:{alert_id}",
+                        )
+                    ]
+                ]
+            )
 
         try:
             if send_check_in_audio and risk_level.lower() == "uncertain":
@@ -621,6 +643,7 @@ class BrainOrchestrator:
                         chat_id=telegram_user_id,
                         voice=audio_file,
                         caption=need_info_msg["text"],
+                        reply_markup=inline_keyboard,
                     )
                 print(
                     f"[BrainOrchestrator] Need-info audio sent to senior {senior.full_name} ({lang})"
@@ -797,7 +820,7 @@ class BrainOrchestrator:
         transcript: str | None = None,
         audio_url: str | None = None,
     ) -> None:
-        if risk_level in ["UNCERTAIN", "FALSE_ALARM"]:
+        if risk_level == "FALSE_ALARM":
             return
 
         contacts = self._get_emergency_contacts(senior.id)
@@ -821,9 +844,10 @@ class BrainOrchestrator:
             audio_url=audio_url,
         )
 
+        action_type = "escalate_to_operator" if risk_level in ["URGENT", "NON_URGENT"] else "notify_family"
         self._action_logger.log_action(
             alert_id=alert_id,
-            action_type="escalate_to_operator",
+            action_type=action_type,
             action_status="success",
             details={
                 "priority": "urgent" if risk_level == "URGENT" else "non-urgent",

@@ -22,9 +22,14 @@ scheduler = AsyncIOScheduler()
 async def run_conversation_timeout_check():
     """Run timeout check for active conversations."""
     try:
-        from app.brain.services.conversation_timeout import ConversationTimeoutHandler
+        from app.brain.services.conversation_timeout import (
+            ConversationTimeoutHandler,
+            DEFAULT_FOLLOW_UP_TIMEOUT_SECONDS,
+        )
         handler = ConversationTimeoutHandler()
-        results = handler.check_and_timeout_conversations(timeout_minutes=1)
+        results = handler.check_and_timeout_conversations(
+            timeout_seconds=DEFAULT_FOLLOW_UP_TIMEOUT_SECONDS
+        )
         if results:
             logger.info(f"Timeout check: {len(results)} conversations timed out")
     except Exception as e:
@@ -40,11 +45,11 @@ async def lifespan(_: FastAPI):
     scheduler.add_job(
         run_conversation_timeout_check,
         "interval",
-        seconds=30,
+        seconds=5,
         id="conversation_timeout_check",
     )
     scheduler.start()
-    logger.info("Started conversation timeout scheduler (every 30 seconds)")
+    logger.info("Started conversation timeout scheduler (every 5 seconds)")
 
     if settings.bot_mode == "webhook":
         if not settings.bot_webhook_url:

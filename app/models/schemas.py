@@ -1,7 +1,33 @@
 from datetime import datetime
+import re
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+SINGAPORE_COUNTRY_CODE = "+65"
+SINGAPORE_PHONE_DIGITS = 8
+
+
+def _normalize_singapore_phone_number(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+
+    digits_only = re.sub(r"\D", "", trimmed)
+    local_digits = (
+        digits_only[2:]
+        if digits_only.startswith("65")
+        and len(digits_only) == SINGAPORE_PHONE_DIGITS + 2
+        else digits_only
+    )
+
+    if not local_digits.isdigit() or len(local_digits) != SINGAPORE_PHONE_DIGITS:
+        raise ValueError("Phone number must contain exactly 8 digits")
+
+    return f"{SINGAPORE_COUNTRY_CODE}{local_digits}"
 
 
 class Senior(BaseModel):
@@ -56,6 +82,11 @@ class EmergencyContactInsert(BaseModel):
     priority_order: int = 1
     notify_on_uncertain: bool = False
 
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def normalize_phone_number(cls, value: str | None) -> str | None:
+        return _normalize_singapore_phone_number(value)
+
 
 class EmergencyContactUpdate(BaseModel):
     name: str | None = None
@@ -64,6 +95,11 @@ class EmergencyContactUpdate(BaseModel):
     telegram_user_id: str | None = None
     priority_order: int | None = None
     notify_on_uncertain: bool | None = None
+
+    @field_validator("phone_number", mode="before")
+    @classmethod
+    def normalize_phone_number(cls, value: str | None) -> str | None:
+        return _normalize_singapore_phone_number(value)
 
 
 class AlertUpdate(BaseModel):

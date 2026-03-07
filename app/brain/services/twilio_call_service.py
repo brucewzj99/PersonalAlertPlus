@@ -24,6 +24,7 @@ class TwilioCallService:
     def _get_client(self):
         if self._client is None:
             from twilio.rest import Client
+
             self._client = Client(
                 self._settings.twilio_account_sid,
                 self._settings.twilio_auth_token,
@@ -35,7 +36,11 @@ class TwilioCallService:
         to_number: str,
         language: str = "en",
     ) -> dict:
-        if not self._settings.twilio_account_sid or not self._settings.twilio_auth_token:
+        print(f"Making check-in call to {to_number} in language {language}")
+        if (
+            not self._settings.twilio_account_sid
+            or not self._settings.twilio_auth_token
+        ):
             logger.warning("Twilio not configured, skipping call")
             return {"success": False, "error": "Twilio not configured"}
 

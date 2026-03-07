@@ -28,61 +28,80 @@ OPERATOR_ACTION_MESSAGES: dict[str, dict[str, str]] = {
         "family": "We have contacted your family member to keep them informed and support you.",
         "ambulance": "An ambulance has been dispatched and is on the way to your location.",
         "both": "An ambulance has been dispatched and your family member has been contacted to support you.",
+        "attended": "Our team has attended to your case and is continuing to monitor your situation.",
     },
     "zh": {
         "family": "我们已联系您的家属，通知他们您的情况并协助您。",
         "ambulance": "救护车已派出，正在前往您所在的位置。",
         "both": "救护车已派出，同时我们已联系您的家属来协助您。",
+        "attended": "我们的团队已接手您的个案，并会持续关注您的情况。",
     },
     "ms": {
         "family": "Kami telah menghubungi ahli keluarga anda untuk memaklumkan keadaan anda dan membantu anda.",
         "ambulance": "Ambulans telah dihantar dan sedang menuju ke lokasi anda.",
         "both": "Ambulans telah dihantar dan ahli keluarga anda telah dihubungi untuk membantu anda.",
+        "attended": "Pasukan kami telah menangani kes anda dan akan terus memantau keadaan anda.",
     },
     "ta": {
         "family": "உங்கள் நிலை பற்றி தெரிவிக்கவும் உங்களுக்கு உதவவும் உங்கள் குடும்பத்தினருடன் தொடர்பு கொண்டுள்ளோம்.",
         "ambulance": "ஆம்புலன்ஸ் அனுப்பப்பட்டுள்ளது, அது உங்கள் இருப்பிடத்திற்கு வந்து கொண்டிருக்கிறது.",
         "both": "ஆம்புலன்ஸ் அனுப்பப்பட்டுள்ளது, மேலும் உங்களுக்கு உதவ உங்கள் குடும்பத்தினருக்கும் தகவல் அளிக்கப்பட்டுள்ளது.",
+        "attended": "எங்கள் குழு உங்கள் நிலையை கவனத்தில் கொண்டு வழக்கை தொடர்ந்து கையாளுகிறது.",
     },
     "nan": {
         "family": "阮已经联络你的家人，通知你的情况来协助你。",
         "ambulance": "救护车已经派出，正在赶去你的所在位置。",
         "both": "救护车已经派出，阮也已经联络你的家人来协助你。",
+        "attended": "阮的团队已经接手处理你的案件，请放心。",
     },
     "yue": {
         "family": "我哋已经联络你嘅家人，通知佢哋你嘅情况并协助你。",
         "ambulance": "救护车已经派出，正赶往你而家嘅位置。",
         "both": "救护车已经派出，同时我哋已经联络你嘅家人去协助你。",
+        "attended": "我哋嘅团队已经接手跟进你嘅个案，请放心。",
     },
 }
 
+OPERATOR_ACTION_AUDIO_CANDIDATES: dict[str, list[str]] = {
+    "family": ["operator_family_called.mp3"],
+    "ambulance": ["operator_ambulance_dispatched.mp3"],
+    "both": ["operator_family_and_ambulance.mp3"],
+    "attended": ["operator_case_attended.mp3"],
+}
 
-def _operator_action_key(ambulance: bool, family: bool) -> str | None:
+
+def _operator_action_key(ambulance: bool, family: bool, attended: bool) -> str | None:
     if ambulance and family:
         return "both"
     if ambulance:
         return "ambulance"
     if family:
         return "family"
+    if attended:
+        return "attended"
     return None
 
 
 def _operator_action_audio_path(language: str, action_key: str) -> Path:
-    audio_filename_map = {
-        "family": "operator_family_called.mp3",
-        "ambulance": "operator_ambulance_dispatched.mp3",
-        "both": "operator_family_and_ambulance.mp3",
-    }
-    filename = audio_filename_map[action_key]
-    return Path(__file__).resolve().parents[3] / "assets" / "audio" / language / filename
+    audio_dir = Path(__file__).resolve().parents[3] / "assets" / "audio" / language
+    for filename in OPERATOR_ACTION_AUDIO_CANDIDATES.get(action_key, []):
+        candidate = audio_dir / filename
+        if candidate.exists():
+            return candidate
+    return audio_dir / OPERATOR_ACTION_AUDIO_CANDIDATES[action_key][0]
 
 
 async def _notify_senior_operator_action(
     senior_id: str,
     ambulance_dispatched_now: bool,
     family_called_now: bool,
+    case_attended_now: bool,
 ) -> None:
-    action_key = _operator_action_key(ambulance_dispatched_now, family_called_now)
+    action_key = _operator_action_key(
+        ambulance_dispatched_now,
+        family_called_now,
+        case_attended_now,
+    )
     if action_key is None:
         return
 
@@ -103,20 +122,28 @@ async def _notify_senior_operator_action(
         return
 
     preferred_language = str(senior.get("preferred_language") or "en").lower()
-    language = preferred_language if preferred_language in OPERATOR_ACTION_MESSAGES else "en"
+    language = (
+        preferred_language if preferred_language in OPERATOR_ACTION_MESSAGES else "en"
+    )
     text = OPERATOR_ACTION_MESSAGES[language][action_key]
 
     bot = Bot(token=get_settings().telegram_bot_token)
-    await bot.send_message(chat_id=str(telegram_user_id), text=f"✅ {text}")
-
     audio_path = _operator_action_audio_path(language, action_key)
     if audio_path.exists():
         with open(audio_path, "rb") as audio_file:
             await bot.send_voice(
                 chat_id=str(telegram_user_id),
                 voice=audio_file,
-                caption=text,
+                caption=f"✅ {text}",
             )
+    else:
+        logger.warning(
+            "Missing operator action audio for language '%s', action '%s' (expected at %s)",
+            language,
+            action_key,
+            audio_path,
+        )
+        await bot.send_message(chat_id=str(telegram_user_id), text=f"✅ {text}")
 
 
 class FewShotExampleCreate(BaseModel):
@@ -135,6 +162,10 @@ def _ensure_dict_rows(data: Any) -> list[dict[str, Any]]:
 
 
 def _normalize_alert_update(update_payload: dict[str, Any]) -> dict[str, Any]:
+    raw_status = str(update_payload.get("status") or "").strip().lower()
+    if raw_status in {"case closed", "case_closed"}:
+        update_payload["status"] = "closed"
+
     risk_level = update_payload.get("risk_level")
     if risk_level == "FALSE_ALARM":
         update_payload.setdefault("status", "closed")
@@ -151,6 +182,9 @@ def _normalize_alert_update(update_payload: dict[str, Any]) -> dict[str, Any]:
 
     if (update_payload.get("status") or "").lower() == "closed":
         update_payload.setdefault("is_resolved", True)
+
+    if update_payload.get("is_resolved") is True:
+        update_payload.setdefault("status", "closed")
 
     return update_payload
 
@@ -244,7 +278,9 @@ def _collect_operator_actions(update: AlertUpdate) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
     for event in events:
-        key = f"{event['actions_taken']}|{event['action_time']}|{event['action_payload']}"
+        key = (
+            f"{event['actions_taken']}|{event['action_time']}|{event['action_payload']}"
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -315,7 +351,9 @@ def _attach_operator_action_state(alerts: list[dict[str, Any]]) -> list[dict[str
     try:
         response = (
             db.client.table("operator_actions")
-            .select("case_id, operator, actions_taken, action_payload, action_time, created_at")
+            .select(
+                "case_id, operator, actions_taken, action_payload, action_time, created_at"
+            )
             .in_("case_id", alert_ids)
             .order("action_time", desc=True)
             .limit(500)
@@ -375,7 +413,9 @@ def _update_alert_with_fallback(alert_id: str, updates: dict[str, Any]):
                 .execute()
             )
         try:
-            return db.client.table("alerts").update(payload).eq("id", alert_id).execute()
+            return (
+                db.client.table("alerts").update(payload).eq("id", alert_id).execute()
+            )
         except Exception as exc:
             missing = _extract_missing_column(exc, "alerts")
             if missing and missing in payload:
@@ -433,7 +473,9 @@ async def get_alerts(
     try:
         response = (
             db.client.table("alerts")
-            .select("*, seniors(id, full_name, phone_number, address, preferred_language)")
+            .select(
+                "*, seniors(id, full_name, phone_number, address, preferred_language)"
+            )
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
             .execute()
@@ -541,17 +583,23 @@ async def override_alert(
     }
     ambulance_dispatched_now = "dispatch_ambulance" in action_names
     family_called_now = "call_family" in action_names
+    case_attended_now = "mark_attended" in action_names
 
     senior_id = current_row.get("senior_id")
-    if isinstance(senior_id, str) and (ambulance_dispatched_now or family_called_now):
+    if isinstance(senior_id, str) and (
+        ambulance_dispatched_now or family_called_now or case_attended_now
+    ):
         try:
             await _notify_senior_operator_action(
                 senior_id=senior_id,
                 ambulance_dispatched_now=ambulance_dispatched_now,
                 family_called_now=family_called_now,
+                case_attended_now=case_attended_now,
             )
         except Exception as exc:
-            logger.warning("Failed to send operator action notification to senior: %s", exc)
+            logger.warning(
+                "Failed to send operator action notification to senior: %s", exc
+            )
 
     return updated_row
 
@@ -643,7 +691,9 @@ async def get_seniors_overview() -> list[dict[str, Any]]:
         if _is_missing_column_error(exc, "seniors.medical_notes"):
             seniors_response = (
                 db.client.table("seniors")
-                .select("id, full_name, phone_number, address, preferred_language, created_at")
+                .select(
+                    "id, full_name, phone_number, address, preferred_language, created_at"
+                )
                 .order("full_name")
                 .execute()
             )
@@ -655,7 +705,9 @@ async def get_seniors_overview() -> list[dict[str, Any]]:
     try:
         alerts_response = (
             db.client.table("alerts")
-            .select("id, senior_id, created_at, status, risk_level, requires_operator, is_resolved")
+            .select(
+                "id, senior_id, created_at, status, risk_level, requires_operator, is_resolved"
+            )
             .order("created_at", desc=True)
             .limit(500)
             .execute()
@@ -665,7 +717,9 @@ async def get_seniors_overview() -> list[dict[str, Any]]:
         if _is_missing_column_error(exc, "alerts.is_resolved"):
             alerts_response = (
                 db.client.table("alerts")
-                .select("id, senior_id, created_at, status, risk_level, requires_operator")
+                .select(
+                    "id, senior_id, created_at, status, risk_level, requires_operator"
+                )
                 .order("created_at", desc=True)
                 .limit(500)
                 .execute()
@@ -736,7 +790,9 @@ async def create_emergency_contact(
     response = _insert_contact_with_fallback(row)
     rows = _ensure_dict_rows(response.data)
     if not rows:
-        raise HTTPException(status_code=400, detail="Failed to create emergency contact")
+        raise HTTPException(
+            status_code=400, detail="Failed to create emergency contact"
+        )
     return rows[0]
 
 
