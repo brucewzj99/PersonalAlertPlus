@@ -12,7 +12,9 @@ from app.brain.schemas import RiskAnalysis
 
 class OpenAICompatibleClient:
     def __init__(self) -> None:
+        from app.services.database import DatabaseService
         settings = get_settings()
+        self._db = DatabaseService()
         self.base_url = settings.ai_api_base_url
         self.api_key = settings.ai_api_key
         self.chat_model = settings.ai_chat_model
@@ -91,10 +93,27 @@ class OpenAICompatibleClient:
         from app.brain.prompts import (
             RISK_CLASSIFICATION_SYSTEM_PROMPT,
             RISK_CLASSIFICATION_USER_PROMPT,
+            FEW_SHOT_EXAMPLE_TEMPLATE,
         )
 
         medical_info = medical_notes or "None provided"
         lang_display = language or "Unknown"
+
+        # Fetch few-shot examples
+        examples = self._db.get_few_shot_examples(limit=5)
+        examples_str = ""
+        if examples:
+            for ex in examples:
+                examples_str += FEW_SHOT_EXAMPLE_TEMPLATE.format(
+                    transcript=ex.transcript,
+                    risk_level=ex.risk_level,
+                )
+        else:
+            examples_str = "No examples available."
+
+        system_prompt = RISK_CLASSIFICATION_SYSTEM_PROMPT.format(
+            few_shot_examples=examples_str
+        )
 
         user_prompt = RISK_CLASSIFICATION_USER_PROMPT.format(
             senior_name=senior_name,
@@ -105,7 +124,7 @@ class OpenAICompatibleClient:
         )
 
         response = await self._chatCompletion(
-            system_message=RISK_CLASSIFICATION_SYSTEM_PROMPT,
+            system_message=system_prompt,
             user_message=user_prompt,
             response_format="json_object",
         )

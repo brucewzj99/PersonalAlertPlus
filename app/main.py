@@ -9,6 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.bot.application import build_bot_application
 from app.brain.router import router as brain_router, set_telegram_bot
+from app.api.v1.operator import router as operator_router
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="PersonalAlertPlus Bot API", lifespan=lifespan)
 
 app.include_router(brain_router)
+app.include_router(operator_router)
 
 
 @app.get("/health")

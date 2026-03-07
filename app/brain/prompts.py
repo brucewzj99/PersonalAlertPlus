@@ -27,7 +27,11 @@ Output a JSON object with:
 - keywords: array of relevant keywords found
 - recommended_actions: array of suggested actions
 
-Be conservative - when in doubt between categories, choose UNCERTAIN or NON_URGENT over FALSE_ALARM."""
+Be conservative - when in doubt between categories, choose UNCERTAIN or NON_URGENT over FALSE_ALARM.
+
+Below are some examples of past classifications for reference:
+{few_shot_examples}
+"""
 
 RISK_CLASSIFICATION_USER_PROMPT = """Analyze this alert transcript:
 
@@ -50,6 +54,12 @@ Medical Notes: {medical_notes}
 Text input: {text}
 
 Please classify the risk level based on this text."""
+
+FEW_SHOT_EXAMPLE_TEMPLATE = """
+Transcript: {transcript}
+Risk Level: {risk_level}
+---"""
+
 
 EMERGENCY_KEYWORDS = [
     "fall", "fell", "fell down", "fallen",
