@@ -74,9 +74,9 @@ TELEGRAM_BOT_TOKEN=
 SUPABASE_URL=
 SUPABASE_SECRET_KEY=
 SUPABASE_AUDIO_BUCKET=alerts-audio
-BACKEND_API_URL=http://127.0.0.1:8000/api/v1/brain/alerts/ingest
+BACKEND_API_URL=http://127.0.0.1:8000
 BOT_MODE=polling
-BOT_WEBHOOK_URL=
+BOT_WEBHOOK_URL=http://127.0.0.1:8000/telegram/webhook
 BOT_WEBHOOK_SECRET=
 
 # Brain / AI provider (OpenAI-compatible)

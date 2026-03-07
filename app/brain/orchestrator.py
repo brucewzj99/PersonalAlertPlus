@@ -15,7 +15,9 @@ from app.brain.schemas import (
 )
 from app.brain.providers.openai_compatible import OpenAICompatibleClient
 from app.brain.services.audio_fetcher import AudioFetcher
-from app.brain.services.speech_to_text import process_audio as speech_to_text_process_audio
+from app.brain.services.speech_to_text import (
+    process_audio as speech_to_text_process_audio,
+)
 from app.brain.services.risk_engine import RiskEngine
 from app.brain.services.notification_service import NotificationService
 from app.brain.services.action_logger import ActionLogger
@@ -228,13 +230,19 @@ class BrainOrchestrator:
 
         has_voice = bool(payload.audio_base64 or payload.audio_url)
         if has_voice:
-            print("[BrainOrchestrator] Step 3a: Processing voice message (detect → transcribe/translate)...")
+            print(
+                "[BrainOrchestrator] Step 3a: Processing voice message (detect → transcribe/translate)..."
+            )
             try:
                 if payload.audio_base64:
                     audio_bytes = base64.b64decode(payload.audio_base64)
-                    print(f"[BrainOrchestrator] Using inline audio from Telegram ({len(audio_bytes)} bytes), running speech-to-text...")
+                    print(
+                        f"[BrainOrchestrator] Using inline audio from Telegram ({len(audio_bytes)} bytes), running speech-to-text..."
+                    )
                 else:
-                    print(f"[BrainOrchestrator] Fetching audio from: {payload.audio_url}")
+                    print(
+                        f"[BrainOrchestrator] Fetching audio from: {payload.audio_url}"
+                    )
                     audio_bytes = await self._audio_fetcher.fetch_audio_bytes(
                         payload.audio_url
                     )
@@ -350,8 +358,7 @@ class BrainOrchestrator:
             f"[BrainOrchestrator] Step 8: Updating alert in database (risk: {analysis.risk_level}, requires_operator: {requires_operator})"
         )
         language_detected_db = language_detected or senior.preferred_language or "en"
-        risk_level_db = (analysis.risk_level or "MEDIUM").lower()
-        status_db = status_value.lower()
+        risk_level_db = analysis.risk_level or "UNCERTAIN"
         self._update_alert_complete(
             alert_id=alert_id,
             transcription=content,
@@ -362,7 +369,7 @@ class BrainOrchestrator:
             analysis_summary=summary,
             keywords=analysis.keywords,
             requires_operator=requires_operator,
-            status=status_db,
+            status=status,
         )
 
         print(
@@ -391,7 +398,9 @@ class BrainOrchestrator:
                     "status": "active",
                 }
             ).execute()
-            print(f"[BrainOrchestrator] Created conversation record for alert {alert_id}")
+            print(
+                f"[BrainOrchestrator] Created conversation record for alert {alert_id}"
+            )
 
         await self._send_senior_confirmation(
             telegram_user_id=payload.telegram_user_id,
@@ -530,8 +539,13 @@ class BrainOrchestrator:
                         caption=check_in_msg["text"],
                         reply_markup=inline_keyboard,
                     )
-                print(f"[BrainOrchestrator] Check-in audio sent to senior {senior.full_name} ({lang})")
-            elif send_need_info_audio and risk_level.lower() in ["urgent", "non_urgent"]:
+                print(
+                    f"[BrainOrchestrator] Check-in audio sent to senior {senior.full_name} ({lang})"
+                )
+            elif send_need_info_audio and risk_level.lower() in [
+                "urgent",
+                "non_urgent",
+            ]:
                 from app.bot.check_in_messages import get_need_info_message
                 import os
 
@@ -551,7 +565,9 @@ class BrainOrchestrator:
                         voice=audio_file,
                         caption=need_info_msg["text"],
                     )
-                print(f"[BrainOrchestrator] Need-info audio sent to senior {senior.full_name} ({lang})")
+                print(
+                    f"[BrainOrchestrator] Need-info audio sent to senior {senior.full_name} ({lang})"
+                )
             else:
                 await self._telegram_bot.send_message(
                     chat_id=telegram_user_id,
@@ -559,7 +575,9 @@ class BrainOrchestrator:
                     parse_mode="Markdown",
                     reply_markup=inline_keyboard,
                 )
-                print(f"[BrainOrchestrator] Confirmation sent to senior {senior.full_name}")
+                print(
+                    f"[BrainOrchestrator] Confirmation sent to senior {senior.full_name}"
+                )
         except Exception as e:
             print(f"[BrainOrchestrator] Failed to send confirmation to senior: {e}")
 
