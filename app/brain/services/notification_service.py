@@ -19,6 +19,7 @@ class NotificationChannel(ABC):
         contact: EmergencyContact,
         message: str,
         senior: SeniorContext,
+        audio_url: str | None = None,
     ) -> dict[str, Any]:
         """Send notification and return result with status."""
         pass
@@ -33,6 +34,7 @@ class TelegramNotificationChannel(NotificationChannel):
         contact: EmergencyContact,
         message: str,
         senior: SeniorContext,
+        audio_url: str | None = None,
     ) -> dict[str, Any]:
         """Send notification via Telegram."""
         if not contact.telegram_user_id:
@@ -43,6 +45,24 @@ class TelegramNotificationChannel(NotificationChannel):
             }
 
         try:
+            if audio_url:
+                try:
+                    await self.bot.send_voice(
+                        chat_id=contact.telegram_user_id,
+                        voice=audio_url,
+                        caption="Original audio from senior alert",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Telegram audio send failed for %s: %s",
+                        contact.telegram_user_id,
+                        e,
+                    )
+                    await self.bot.send_message(
+                        chat_id=contact.telegram_user_id,
+                        text=f"Original audio: {audio_url}",
+                    )
+
             await self.bot.send_message(
                 chat_id=contact.telegram_user_id,
                 text=message,
@@ -67,7 +87,7 @@ class TwilioSMSChannel(NotificationChannel):
         self,
         account_sid: str,
         auth_token: str,
-        from_number: str,
+        from_number: str | None,
         messaging_service_sid: str | None = None,
     ) -> None:
         self.account_sid = account_sid
@@ -87,6 +107,7 @@ class TwilioSMSChannel(NotificationChannel):
         contact: EmergencyContact,
         message: str,
         senior: SeniorContext,
+        audio_url: str | None = None,
     ) -> dict[str, Any]:
         """Send notification via Twilio SMS."""
         if not contact.phone_number:
@@ -98,6 +119,43 @@ class TwilioSMSChannel(NotificationChannel):
 
         try:
             client = self._get_client()
+            if not self.messaging_service_sid and not self.from_number:
+                return {
+                    "success": False,
+                    "error": "No Twilio from number",
+                    "channel": "sms",
+                }
+
+            if audio_url:
+                try:
+                    audio_msg_params = {
+                        "body": "Original audio from senior alert",
+                        "to": contact.phone_number,
+                        "media_url": [audio_url],
+                    }
+                    if self.messaging_service_sid:
+                        audio_msg_params["messaging_service_sid"] = self.messaging_service_sid
+                    else:
+                        audio_msg_params["from_"] = self.from_number
+                    client.messages.create(**audio_msg_params)
+                except Exception as e:
+                    logger.warning(
+                        "Twilio audio send failed for %s: %s",
+                        contact.phone_number,
+                        e,
+                    )
+                    fallback_audio_link_params = {
+                        "body": f"Original audio: {audio_url}",
+                        "to": contact.phone_number,
+                    }
+                    if self.messaging_service_sid:
+                        fallback_audio_link_params["messaging_service_sid"] = (
+                            self.messaging_service_sid
+                        )
+                    else:
+                        fallback_audio_link_params["from_"] = self.from_number
+                    client.messages.create(**fallback_audio_link_params)
+
             msg_params = {
                 "body": message,
                 "to": contact.phone_number,
@@ -145,7 +203,7 @@ class NotificationService:
             self.sms_channel = TwilioSMSChannel(
                 account_sid=settings.twilio_account_sid,
                 auth_token=settings.twilio_auth_token,
-                from_number=settings.twilio_from_number,
+                from_number=settings.twilio_from_number or "",
                 messaging_service_sid=settings.twilio_messaging_service_sid,
             )
             if not notify_telegram_first or not telegram_bot:
@@ -200,9 +258,6 @@ class NotificationService:
             "",
             "Assessment:",
             summary,
-            "",
-            "—",
-            "PersonalAlertPlus",
         ])
 
         return "\n".join(parts)
@@ -244,7 +299,7 @@ class NotificationService:
 
         for contact in sorted_contacts:
             for channel in self.channels:
-                result = await channel.send(contact, message, senior)
+                result = await channel.send(contact, message, senior, audio_url=audio_url)
                 results.append(result)
 
                 if result.get("success"):

@@ -81,7 +81,6 @@ interface EmergencyContact {
     name: string;
     relationship?: string | null;
     phone_number?: string | null;
-    telegram_user_id?: string | null;
     priority_order: number;
     notify_on_uncertain: boolean;
 }
@@ -112,7 +111,6 @@ interface NewContactDraft {
     name: string;
     relationship: string;
     phone_number: string;
-    telegram_user_id: string;
     priority_order: number;
     notify_on_uncertain: boolean;
 }
@@ -121,10 +119,11 @@ const defaultContactDraft: NewContactDraft = {
     name: "",
     relationship: "",
     phone_number: "",
-    telegram_user_id: "",
     priority_order: 1,
     notify_on_uncertain: false,
 };
+
+const FAMILY_CONTACT_SIP_URI = "sip:brucedev@sip.linphone.org";
 
 const isClosedAlert = (alert: Alert): boolean => {
     return (
@@ -369,7 +368,9 @@ const toReadableValue = (value: unknown): string => {
     return String(value);
 };
 
-const getOperatorActionDetails = (action: OperatorActionRecord): string | null => {
+const getOperatorActionDetails = (
+    action: OperatorActionRecord,
+): string | null => {
     const payload = action.action_payload;
     if (!payload) return null;
 
@@ -444,6 +445,22 @@ const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState<DashboardTab>("to_handle");
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+    const callFamilyContactViaLinphone = () => {
+        const link = document.createElement("a");
+        link.href = FAMILY_CONTACT_SIP_URI;
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.setTimeout(() => {
+            if (document.hasFocus()) {
+                setToastMessage(
+                    "If no app opens, set Linphone as default handler for sip: links.",
+                );
+            }
+        }, 500);
+    };
 
     const fetchAlerts = async () => {
         const response = await fetch(
@@ -980,7 +997,6 @@ const App: React.FC = () => {
                     name: draft.name.trim(),
                     relationship: draft.relationship.trim() || null,
                     phone_number: normalizedPhone,
-                    telegram_user_id: draft.telegram_user_id.trim() || null,
                     priority_order: Number(draft.priority_order) || 1,
                     notify_on_uncertain: Boolean(draft.notify_on_uncertain),
                 }),
@@ -1031,7 +1047,6 @@ const App: React.FC = () => {
                     name: contact.name,
                     relationship: contact.relationship || null,
                     phone_number: normalizedPhone,
-                    telegram_user_id: contact.telegram_user_id || null,
                     priority_order: Number(contact.priority_order) || 1,
                     notify_on_uncertain: Boolean(contact.notify_on_uncertain),
                 }),
@@ -1812,21 +1827,6 @@ const App: React.FC = () => {
                                             }
                                             placeholder="Phone (8 digits)"
                                         />
-                                        <input
-                                            className="mini-input"
-                                            value={
-                                                contact.telegram_user_id || ""
-                                            }
-                                            onChange={(e) =>
-                                                updateContactField(
-                                                    contactModalSenior.id,
-                                                    contact.id,
-                                                    "telegram_user_id",
-                                                    e.target.value,
-                                                )
-                                            }
-                                            placeholder="Telegram user ID"
-                                        />
                                         <div className="mini-row">
                                             <label
                                                 style={{ fontSize: "0.8rem" }}
@@ -1977,26 +1977,6 @@ const App: React.FC = () => {
                                             )
                                         }
                                         placeholder="Phone (8 digits)"
-                                    />
-                                    <input
-                                        className="mini-input"
-                                        value={
-                                            (
-                                                newContactBySenior[
-                                                    contactModalSenior.id
-                                                ] || defaultContactDraft
-                                            ).telegram_user_id
-                                        }
-                                        onChange={(e) =>
-                                            updateDraftForSenior(
-                                                contactModalSenior.id,
-                                                {
-                                                    telegram_user_id:
-                                                        e.target.value,
-                                                },
-                                            )
-                                        }
-                                        placeholder="Telegram user ID"
                                     />
                                     <div className="mini-row">
                                         <label style={{ fontSize: "0.8rem" }}>
@@ -2645,38 +2625,42 @@ const App: React.FC = () => {
                                                                     contact.id,
                                                                 );
                                                             return (
-                                                                <button
+                                                                <div
                                                                     key={
                                                                         contact.id
                                                                     }
-                                                                    type="button"
-                                                                    className={`pill-chip ${isSelected ? "active" : ""}`}
-                                                                    onClick={() => {
-                                                                        setSelectedFamilyContactIds(
-                                                                            (
-                                                                                prev,
-                                                                            ) =>
-                                                                                prev.includes(
-                                                                                    contact.id,
-                                                                                )
-                                                                                    ? prev.filter(
-                                                                                          (
-                                                                                              id,
-                                                                                          ) =>
-                                                                                              id !==
-                                                                                              contact.id,
-                                                                                      )
-                                                                                    : [
-                                                                                          ...prev,
-                                                                                          contact.id,
-                                                                                      ],
-                                                                        );
-                                                                    }}
+                                                                    className="pill-contact-row"
                                                                 >
-                                                                    {
-                                                                        contact.name
-                                                                    }
-                                                                </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className={`pill-chip ${isSelected ? "active" : ""}`}
+                                                                        onClick={() => {
+                                                                            setSelectedFamilyContactIds(
+                                                                                (
+                                                                                    prev,
+                                                                                ) =>
+                                                                                    prev.includes(
+                                                                                        contact.id,
+                                                                                    )
+                                                                                        ? prev.filter(
+                                                                                              (
+                                                                                                  id,
+                                                                                              ) =>
+                                                                                                  id !==
+                                                                                                  contact.id,
+                                                                                          )
+                                                                                        : [
+                                                                                              ...prev,
+                                                                                              contact.id,
+                                                                                          ],
+                                                                            );
+                                                                        }}
+                                                                    >
+                                                                        {
+                                                                            contact.name
+                                                                        }
+                                                                    </button>
+                                                                </div>
                                                             );
                                                         },
                                                     )}
@@ -2814,7 +2798,8 @@ const App: React.FC = () => {
 
                             {selectedCaseTab === "actions" && (
                                 <div className="action-history-list">
-                                    {selectedCaseOperatorActions.length === 0 ? (
+                                    {selectedCaseOperatorActions.length ===
+                                    0 ? (
                                         <div
                                             className="container-box"
                                             style={{
@@ -2822,8 +2807,8 @@ const App: React.FC = () => {
                                                 color: "var(--text-muted)",
                                             }}
                                         >
-                                            No operator actions recorded for this
-                                            case.
+                                            No operator actions recorded for
+                                            this case.
                                         </div>
                                     ) : (
                                         selectedCaseOperatorActions.map(
@@ -2909,24 +2894,25 @@ const App: React.FC = () => {
                                                     {contact.relationship ||
                                                         "-"}
                                                 </div>
-                                                <div
-                                                    style={{
-                                                        fontSize: "0.9rem",
-                                                        marginBottom: "0.25rem",
-                                                    }}
-                                                >
-                                                    Phone:{" "}
-                                                    {contact.phone_number ||
-                                                        "-"}
-                                                </div>
-                                                <div
-                                                    style={{
-                                                        fontSize: "0.9rem",
-                                                    }}
-                                                >
-                                                    Telegram:{" "}
-                                                    {contact.telegram_user_id ||
-                                                        "-"}
+                                                <div className="contact-call-row">
+                                                    <div
+                                                        style={{
+                                                            fontSize: "0.9rem",
+                                                        }}
+                                                    >
+                                                        Phone:{" "}
+                                                        {contact.phone_number ||
+                                                            "-"}
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        className="pill-call-btn"
+                                                        onClick={() =>
+                                                            callFamilyContactViaLinphone()
+                                                        }
+                                                    >
+                                                        Dial now
+                                                    </button>
                                                 </div>
                                             </div>
                                         ))
@@ -2939,7 +2925,11 @@ const App: React.FC = () => {
             )}
 
             {toastMessage && (
-                <div className="toast-container" role="status" aria-live="polite">
+                <div
+                    className="toast-container"
+                    role="status"
+                    aria-live="polite"
+                >
                     <div className="toast-message">{toastMessage}</div>
                 </div>
             )}
