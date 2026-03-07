@@ -7,6 +7,8 @@ class BrainAlertPayload(BaseModel):
     telegram_user_id: str
     channel: str = "telegram"
     audio_url: str | None = None
+    """Voice recording as base64 (from Telegram). When set, used for Groq STT instead of fetching from audio_url."""
+    audio_base64: str | None = None
     text: str | None = None
 
 
