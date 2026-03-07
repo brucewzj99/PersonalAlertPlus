@@ -39,7 +39,7 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * Seniors may not be near the hardware button
   * Operators must manually interpret raw audio
   * Language and dialect differences complicate assessment
-  * High volume of accidental or non-urgent alerts
+  * High volume of accidental or NON_URGENT alerts
   * No automated triage assistance layer
 
 * We aim to:
@@ -78,30 +78,38 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
 
 * Alerts are categorized into:
 
-  * 🔴 HIGH – Immediate emergency
-  * 🟠 MEDIUM – Distress / unclear
-  * 🟢 LOW – Accidental / non-urgent
+  * 🔴 URGENT – Immediate emergency
+  * 🟠 NON_URGENT – Follow-up needed
+  * 🟡 UNCERTAIN – Needs senior confirmation
+  * 🟢 FALSE_ALARM – Accidental/no service request
 
 ### 🔹 AI Action Layer
 
 * Based on classification:
 
-* LOW Risk
+* FALSE_ALARM
+
+  * Reply with apology + option to escalate
+  * Do not notify family by default
+  * No operator required unless senior escalates
+
+* UNCERTAIN
+
+  * Reply to senior with bilingual confirmation message
+  * Show inline buttons: "I am okay" and "Escalate"
+  * If senior escalates, route to NON_URGENT flow and notify family
+
+* NON_URGENT
 
   * Notify family
-  * Log case
-  * No operator required
+  * Escalate to operations as NON_URGENT
+  * Mark case for operator follow-up
 
-* MEDIUM Risk
+* URGENT
 
-  * Attempt clarification
-  * Escalate if unresolved
-
-* HIGH Risk
-
-  * Escalate to operator immediately
-  * Suggest dispatch recommendation
-  * Notify emergency contact
+  * Notify family immediately
+  * Escalate to operations as URGENT priority
+  * Mark case for urgent operator handling
 
 * AI assists. Humans decide.
 
@@ -175,9 +183,10 @@ After registration, seniors can send:
 After AI processing, seniors receive a confirmation message:
 - Shows risk level detected
 - Written in their **native language** + **English**
-- For LOW/MEDIUM risk: includes an inline button "I'm not okay" to escalate if they need help
-- When senior clicks "I'm not okay":
-  - Alert is escalated to HIGH risk
+- For UNCERTAIN risk: includes "I am okay" and "Escalate" inline buttons
+- For FALSE_ALARM risk: includes "Escalate" inline button
+- When senior clicks "Escalate":
+  - Alert is escalated to NON_URGENT
   - Emergency contacts are notified immediately
   - Alert marked for operator review
 
@@ -208,9 +217,10 @@ This provides a safety net in case AI misclassifies the situation.
 
 ### Step 4 – AI Decision
 
-* LOW → Notify family → Close
-* MEDIUM → Clarify → Escalate if needed
-* HIGH → Escalate to operator immediately
+* FALSE_ALARM → Reply with apology + Escalate option
+* UNCERTAIN → Ask for confirmation from senior ("I am okay" / "Escalate")
+* NON_URGENT → Notify family + escalate to operator as NON_URGENT
+* URGENT → Notify family + escalate to operator as URGENT priority
 
 ### Step 5 – Operator Review
 
@@ -262,14 +272,16 @@ subgraph Backend_Main_Brain
     B9{Risk Level?}
     
     %% Risk branches
-    B10[HIGH Risk Handler]
-    B11[MEDIUM Risk Handler]
-    B12[LOW Risk Handler]
+    B10[URGENT Handler]
+    B11[NON_URGENT Handler]
+    B12[UNCERTAIN Handler]
+    B18[FALSE_ALARM Handler]
 
     %% Actions
     B13[Generate AI Summary for Operator]
     B14[Notify Operator Dashboard]
     B15[Notify Family]
+    B19[Reply to Senior]
     B16[Automated Call to Senior]
     B17[Optional IoT Check]
 end
@@ -318,20 +330,23 @@ B7 --> B8
 B8 --> B9
 
 %% Risk routing
-B9 -->|HIGH| B10
-B9 -->|MEDIUM| B11
-B9 -->|LOW| B12
+B9 -->|URGENT| B10
+B9 -->|NON_URGENT| B11
+B9 -->|UNCERTAIN| B12
+B9 -->|FALSE_ALARM| B18
 
-%% HIGH
+%% URGENT
 B10 --> B13
+B10 --> B15
 B13 --> B14
 
-%% MEDIUM
+%% NON_URGENT
 B11 --> B15
-B11 --> B16
+B11 --> B14
 
-%% LOW
-B12 --> B15
+%% UNCERTAIN / FALSE_ALARM
+B12 --> B19
+B18 --> B19
 
 %% Optional IoT
 B11 --> B17
@@ -349,6 +364,7 @@ B8 --> D4
 C4 --> D5
 B15 --> D4
 B16 --> D4
+B19 --> D4
 ```
 
 ### Bot → Backend API Payload
@@ -415,6 +431,7 @@ Contacts to notify in case of emergency.
 | phone_number | text | No | Contact's phone number |
 | telegram_user_id | text | No | Contact's Telegram user ID |
 | priority_order | int | No | Contact priority (1 = highest) |
+| notify_on_uncertain | bool | No | Whether this contact receives UNCERTAIN alerts |
 | created_at | timestamptz | Yes | Creation timestamp |
 
 ---
@@ -432,11 +449,11 @@ Emergency alerts triggered by seniors.
 | transcription | text | No | Text content or voice-to-text result |
 | language_detected | text | No | Detected language (en/zh/ms/ta/etc) |
 | translated_text | text | No | English translation of transcript |
-| risk_level | text | No | HIGH/MEDIUM/LOW classification |
+| risk_level | text | No | URGENT/NON_URGENT/UNCERTAIN/FALSE_ALARM classification |
 | risk_score | numeric | No | AI confidence score (0.0-1.0) |
 | analysis_summary | text | No | AI-generated summary for operators |
 | keywords | jsonb | No | Array of keywords extracted |
-| status | text | No | pending/escalated/closed (default: pending) |
+| status | text | No | pending/pending_confirmation/escalated/closed |
 | requires_operator | boolean | No | Whether operator intervention needed |
 | resolved_by | text | No | Who resolved (ai/operator) |
 | processing_status | text | No | pending/processing/completed/failed |
@@ -510,7 +527,7 @@ Human operator decisions and feedback.
 
 ## 8. 🧪 Example Scenarios
 
-### 🟢 Accidental Press (LOW Risk)
+### 🟢 Accidental Press (FALSE_ALARM)
 
 * Transcript:
 
@@ -518,12 +535,12 @@ Human operator decisions and feedback.
 
 * AI:
 
-  * LOW risk (0.12)
-  * Notifies family
-  * Senior receives confirmation message with "I'm not okay" button
-  * If senior clicks button → escalate to HIGH
+  * FALSE_ALARM risk (0.12)
+  * Senior receives apology + "Escalate" button
+  * No family notification by default
+  * If senior clicks button → escalate to NON_URGENT and notify family
 
-### 🟠 Medium Risk with Escalation
+### 🟡 Unclear Distress (UNCERTAIN)
 
 * Transcript:
 
@@ -531,13 +548,25 @@ Human operator decisions and feedback.
 
 * AI:
 
-  * MEDIUM risk (0.45)
-  * Notifies family
-  * Senior receives confirmation message with "I'm not okay" button
-  * If senior feels worse and clicks button → escalate to HIGH
-  * Otherwise case closes after timeout
+  * UNCERTAIN risk (0.45)
+  * Senior receives "I am okay" + "Escalate" buttons
+  * No family notification unless escalation is requested
+  * If senior clicks escalate → move to NON_URGENT and notify family
 
-### 🔴 Fall Incident
+### 🟠 Follow-up Needed (NON_URGENT)
+
+* Transcript:
+
+  * "I feel weak and need someone to check on me soon."
+
+* AI:
+
+  * NON_URGENT risk (0.68)
+  * Family is notified
+  * Case is escalated to operations as NON_URGENT
+  * Operator follows up shortly
+
+### 🔴 Fall Incident (URGENT)
 
 * Transcript:
 
@@ -545,7 +574,7 @@ Human operator decisions and feedback.
 
 * AI:
 
-  * HIGH risk (0.94)
+  * URGENT risk (0.94)
   * Escalates immediately
   * Displays address & medical history
   * Suggests ambulance dispatch

@@ -113,7 +113,7 @@ class OpenAICompatibleClient:
         try:
             parsed = json.loads(response)
             return RiskAnalysis(
-                risk_level=parsed.get("risk_level", "MEDIUM"),
+                risk_level=parsed.get("risk_level", "UNCERTAIN"),
                 risk_score=float(parsed.get("risk_score", 0.5)),
                 reasoning=parsed.get("reasoning", "No reasoning provided"),
                 keywords=parsed.get("keywords", []),
@@ -121,9 +121,9 @@ class OpenAICompatibleClient:
             )
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             return RiskAnalysis(
-                risk_level="MEDIUM",
+                risk_level="UNCERTAIN",
                 risk_score=0.5,
-                reasoning=f"Failed to parse AI response: {str(e)}. Defaulted to MEDIUM.",
+                reasoning=f"Failed to parse AI response: {str(e)}. Defaulted to UNCERTAIN.",
                 keywords=[],
                 recommended_actions=["Human review required"],
             )

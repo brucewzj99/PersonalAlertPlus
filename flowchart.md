@@ -101,9 +101,10 @@ flowchart TB
     S3 -->|"SMS Fallback"| E4
     
     B2 -->|"Senior Confirmation"| E3
-    E3 -->|"Inline Button (LOW/MEDIUM)"| BH1
+    E3 -->|"Inline Button (UNCERTAIN/FALSE_ALARM)"| BH1
     
-    BH1 -->|"Click 'I'm not okay'"| B2
+    BH1 -->|"Click 'Escalate'"| B2
+    BH1 -->|"Click 'I am okay'"| B2
     BH1 -->|"Escalate"| E3
     BH1 -->|"Notify Family Again"| E4
     
@@ -161,7 +162,7 @@ sequenceDiagram
     AI-->>Brain: English transcript
     
     Brain->>AI: Classify risk (GPT)
-    AI-->>Brain: {risk_level: HIGH, score: 0.94, reasoning: ...}
+    AI-->>Brain: {risk_level: URGENT, score: 0.94, reasoning: ...}
     
     Brain->>Brain: Apply guardrails
     Brain->>DB: Update alert with analysis
@@ -206,6 +207,7 @@ erDiagram
         text phone_number
         text telegram_user_id
         int priority_order
+        bool notify_on_uncertain
         timestamptz created_at
     }
 
@@ -260,7 +262,7 @@ erDiagram
 
 ## Case Examples
 
-### Case 1: Accidental Press (LOW Risk)
+### Case 1: FALSE_ALARM (Accidental Trigger)
 
 ```mermaid
 sequenceDiagram
@@ -268,36 +270,47 @@ sequenceDiagram
     participant Bot
     participant Brain
     participant AI
-    participant Family
 
-    Senior->>Bot: Voice: "Sorry, I pressed wrongly"
+    Senior->>Bot: "Sorry, I pressed wrongly"
     Bot->>Brain: POST /alerts/ingest
-    Brain->>AI: Whisper transcription
-    AI-->>Brain: "Sorry, I pressed wrongly"
-    Brain->>AI: Risk classification
-    AI-->>Brain: {risk_level: LOW, score: 0.12}
-    Brain->>Brain: Guardrails check (no emergency keywords)
-    Brain->>Database: Update alert (LOW, 0.12)
-    Brain->>Family: Telegram notification
-    Family-->>Senior: Acknowledge
-    Brain->>Database: Log action, close alert
-    Brain->>Senior: Send confirmation message<br/>+ "I'm not okay" button
+    Brain->>AI: Classify risk
+    AI-->>Brain: {risk_level: FALSE_ALARM, score: 0.12}
+    Brain->>Database: Update alert (FALSE_ALARM, closed)
+    Brain->>Senior: Apology + "Escalate" button
 ```
 
 **Flow Summary:**
-1. Senior sends voice message accidentally
-2. Bot uploads to Supabase → calls brain endpoint
-3. Whisper transcribes → "Sorry, I pressed wrongly"
-4. LLM classifies as **LOW risk** (0.12 confidence)
-5. Guardrails confirm no emergency keywords
-6. Alert saved with `risk_level=LOW`, `status=closed`
-7. Family notified via Telegram
-8. **Senior receives confirmation message with "I'm not okay" button**
-9. If senior clicks button → escalate to HIGH
+1. Alert is classified as `FALSE_ALARM`.
+2. System closes the case and does not notify family by default.
+3. Senior can still click "Escalate" to move into the NON_URGENT flow.
 
 ---
 
-### Case 2: Fall Incident (HIGH Risk)
+### Case 2: UNCERTAIN (Needs Confirmation)
+
+```mermaid
+sequenceDiagram
+    participant Senior
+    participant Bot
+    participant Brain
+    participant AI
+
+    Senior->>Bot: "I feel strange... not sure"
+    Bot->>Brain: POST /alerts/ingest
+    Brain->>AI: Classify risk
+    AI-->>Brain: {risk_level: UNCERTAIN, score: 0.47}
+    Brain->>Database: Update alert (UNCERTAIN, pending_confirmation)
+    Brain->>Senior: Bilingual reply + "I am okay" and "Escalate"
+```
+
+**Flow Summary:**
+1. Alert is classified as `UNCERTAIN`.
+2. System asks senior to confirm status via inline buttons.
+3. Family is not notified unless senior escalates.
+
+---
+
+### Case 3: NON_URGENT (Follow-Up Required)
 
 ```mermaid
 sequenceDiagram
@@ -308,36 +321,23 @@ sequenceDiagram
     participant Family
     participant Operator
 
-    Senior->>Bot: Voice: "I fell down, cannot get up"
+    Senior->>Bot: "Please check on me soon, feeling weak"
     Bot->>Brain: POST /alerts/ingest
-    Brain->>AI: Whisper transcription
-    AI-->>Brain: "I fell down, cannot get up"
-    Brain->>AI: Risk classification
-    AI-->>Brain: {risk_level: HIGH, score: 0.89}
-    Brain->>Brain: Guardrails check (keyword: "fell")
-    Brain->>Database: Update alert (HIGH, 0.94, escalated)
-    Brain->>Family: Telegram + SMS notification
-    Brain->>Database: Log HIGH-risk notification
-    Brain->>Senior: Send confirmation message<br/>(no button - already escalated)
-    Note over Operator: Dashboard sees alert
-    Operator->>Database: Review alert, dispatch ambulance
-    Operator->>Database: Log operator action
+    Brain->>AI: Classify risk
+    AI-->>Brain: {risk_level: NON_URGENT, score: 0.68}
+    Brain->>Database: Update alert (NON_URGENT, escalated)
+    Brain->>Family: Notify family contacts
+    Brain->>Operator: Escalate as NON_URGENT
 ```
 
 **Flow Summary:**
-1. Senior sends voice: "I fell down, cannot get up"
-2. Bot uploads → calls brain endpoint
-3. Whisper transcribes → "I fell down, cannot get up"
-4. LLM classifies as **HIGH risk** (0.89)
-5. Guardrails elevate due to "fell" keyword → 0.94
-6. Alert saved with `risk_level=HIGH`, `status=escalated`, `requires_operator=true`
-7. Family notified immediately via Telegram + SMS
-8. **Senior receives confirmation message (no inline button - already escalated)**
-9. Operator sees alert on dashboard, takes action
+1. Alert is classified as `NON_URGENT`.
+2. Family is notified.
+3. Case is escalated to operations as NON_URGENT.
 
 ---
 
-### Case 3: Non-English Voice (Chinese)
+### Case 4: URGENT (Immediate Emergency)
 
 ```mermaid
 sequenceDiagram
@@ -345,60 +345,26 @@ sequenceDiagram
     participant Bot
     participant Brain
     participant AI
+    participant Family
+    participant Operator
 
-    Senior->>Bot: Voice (Hokkien): "我跌倒了"
+    Senior->>Bot: "I fell down, cannot get up"
     Bot->>Brain: POST /alerts/ingest
-    Brain->>AI: Whisper transcription (detects: Chinese)
-    AI-->>Brain: "wo die dao le" (pinyin approximation)
-    Brain->>AI: Translate to English
-    AI-->>Brain: "I fell down"
-    Brain->>AI: Risk classification (English text)
-    AI-->>Brain: {risk_level: HIGH, score: 0.91}
-    Brain->>Database: Update alert with<br/>transcription, translated_text, analysis
+    Brain->>AI: Classify risk
+    AI-->>Brain: {risk_level: URGENT, score: 0.92}
+    Brain->>Database: Update alert (URGENT, escalated)
+    Brain->>Family: Notify family contacts immediately
+    Brain->>Operator: Escalate as URGENT priority
 ```
 
 **Flow Summary:**
-1. Senior sends voice in Hokkien
-2. Whisper detects Chinese language
-3. Transcription: "wo die dao le" (phonetic)
-4. Translation prompt converts to English: "I fall down"
-5. Classification runs on English text → HIGH risk
-6. Database stores both original + translated text
-7. Analysis summary generated for operator
+1. Alert is classified as `URGENT`.
+2. Family is notified immediately.
+3. Case is escalated to operations with URGENT priority.
 
 ---
 
-### Case 4: Text Alert (No Voice)
-
-```mermaid
-sequenceDiagram
-    participant Senior
-    participant Bot
-    participant Brain
-    participant AI
-
-    Senior->>Bot: Text: "I need help, chest pain"
-    Bot->>Brain: POST /alerts/ingest<br/>{text: "I need help, chest pain"}
-    Brain->>Brain: Skip audio fetch
-    Brain->>AI: Risk classification (text directly)
-    AI-->>Brain: {risk_level: HIGH, score: 0.96}
-    Brain->>Brain: Guardrails (keyword: "chest pain")
-    Brain->>Database: Update alert
-    Brain->>Family: Emergency notification
-```
-
-**Flow Summary:**
-1. Senior sends text message instead of voice
-2. Bot calls brain endpoint with `text` field (no `audio_url`)
-3. Brain skips audio fetch step
-4. Classification runs directly on text
-5. Guardrails elevate due to "chest pain" keyword
-6. HIGH risk alert → immediate escalation
-7. **Senior receives confirmation message with inline button**
-
----
-
-### Case 5: Senior Escalation ("I'm not okay" Button)
+### Case 5: Senior Escalation (from UNCERTAIN/FALSE_ALARM)
 
 ```mermaid
 sequenceDiagram
@@ -407,22 +373,20 @@ sequenceDiagram
     participant Brain
     participant Family
 
-    Brain->>Senior: Confirmation message<br/>"Everything is fine"<br/>+ "I'm not okay" button
-    Senior->>Bot: Click "I'm not okay"
-    Bot->>Brain: Callback: escalate:{alert_id}
-    Brain->>Database: Update alert to HIGH<br/>status=escalated
-    Brain->>Database: Log senior_escalated action
+    Brain->>Senior: UNCERTAIN/FALSE_ALARM follow-up<br/>+ "Escalate" button
+    Senior->>Bot: Click "Escalate"
+    Bot->>Brain: Callback: escalate_non_urgent:{alert_id}
+    Brain->>Database: Update alert to NON_URGENT<br/>status=escalated
+    Brain->>Database: Log senior_escalated_to_non_urgent action
     Brain->>Family: Send "SENIOR ESCALATED" notification
     Brain->>Senior: "Your alert has been escalated"
 ```
 
 **Flow Summary:**
-1. Senior received LOW/MEDIUM confirmation with "I'm not okay" button
-2. Senior feels worse, clicks the button
-3. Bot handler processes callback `escalate:{alert_id}`
-4. Alert upgraded to HIGH risk, status=escalated
-5. Emergency contacts notified again with "SENIOR ESCALATED" message
-6. Senior receives confirmation that alert was escalated
+1. Senior received UNCERTAIN/FALSE_ALARM follow-up with "Escalate" button.
+2. Bot handler processes callback `escalate_non_urgent:{alert_id}`.
+3. Alert is upgraded to NON_URGENT and marked for operator review.
+4. Family is notified and senior receives escalation confirmation.
 
 ---
 
@@ -433,7 +397,7 @@ sequenceDiagram
 | `app/bot/` | Telegram bot handlers, conversations, keyboards |
 | `app/bot/handlers/alerts.py` | Handle voice/text alerts |
 | `app/bot/handlers/profile.py` | Profile management commands |
-| `app/bot/handlers/escalate.py` | "I'm not okay" callback handler |
+| `app/bot/handlers/escalate.py` | Confirm/Escalate callback handler |
 | `app/bot/conversations/registration.py` | Registration flow |
 | `app/brain/router.py` | FastAPI endpoints (`/api/v1/brain/*`) |
 | `app/brain/orchestrator.py` | Main processing pipeline |

@@ -10,7 +10,7 @@ Build the AI "brain" layer in Python on top of the existing Telegram bot layer s
   - speech-to-text (OpenAI Whisper API)
   - language detection
   - translation to English (via OpenAI-compatible chat model)
-  - urgency/risk classification (HIGH/MEDIUM/LOW + score + rationale)
+  - urgency/risk classification (URGENT/NON_URGENT/UNCERTAIN/FALSE_ALARM + score + rationale)
   - action generation (store actions + notify family)
 - Brain writes all outputs to Supabase tables (`alerts`, `ai_actions`, etc.).
 - Hackathon-first architecture: one command starts both Telegram layer + brain API in one process.
@@ -154,7 +154,7 @@ Response:
   "ok": true,
   "alert_id": "uuid",
   "processing_status": "completed",
-  "risk_level": "HIGH",
+  "risk_level": "URGENT",
   "risk_score": 0.93
 }
 ```
@@ -173,13 +173,13 @@ Response:
 4. **Transcription** - call Whisper API
 5. **Language handling** - detect language, translate to English if needed
 6. **Risk analysis** - LLM structured output with risk_level, score, reasoning, keywords
-7. **Guardrails** - apply keyword-based overrides (e.g., "fall" always escalates to HIGH)
+7. **Guardrails** - apply keyword-based overrides (e.g., "fall" always escalates to URGENT)
 8. **Persistence** - update alert row with transcription, translation, risk level, summary
 9. **Family notification** - notify emergency contacts via Telegram → SMS fallback
 10. **Senior confirmation** - send message to senior with:
     - Risk level detected
     - Native language + English text
-    - "I'm not okay" inline button (for LOW/MEDIUM only)
+    - Confirmation/Escalate inline buttons (for UNCERTAIN and FALSE_ALARM)
 11. **Error handling** - stage-level try/except, preserve partial outcomes
 
 ---
@@ -198,11 +198,14 @@ _我们已经收到您的信息，经评估确认一切正常。_
 We received your message and assessed everything is fine.
 ```
 
-For **LOW** and **MEDIUM** risk, an inline button is included:
-- "I'm not okay" / "我不舒服" / etc.
+For **UNCERTAIN** risk, inline buttons are included:
+- "I am okay" and "Escalate"
+
+For **FALSE_ALARM** risk, an inline button is included:
+- "Escalate"
 
 If senior clicks the button:
-1. Alert is escalated to HIGH risk
+1. Alert is escalated to NON_URGENT risk
 2. Alert status set to `escalated`, `requires_operator=true`
 3. Emergency contacts notified again with "SENIOR ESCALATED" message
 4. Senior receives confirmation message
@@ -230,7 +233,7 @@ app/
 │       └── action_logger.py       # log to ai_actions table
 ├── bot/
 │   └── handlers/
-│       ├── escalate.py    # "I'm not okay" callback handler
+│       ├── escalate.py    # confirm/escalate callback handler
 │       └── ...
 ```
 
@@ -240,12 +243,12 @@ app/
 
 Messages are sent in senior's native language + English:
 
-| Language | LOW Risk | MEDIUM Risk | HIGH Risk |
-|----------|----------|-------------|------------|
-| EN | "We received your message... Stay safe!" | "We received your message... Our team will follow up soon." | "Emergency received! Dispatching help immediately." |
-| ZH | "我们已经收到您的信息...如有需要，请随时联系我们。" | "我们已经收到您的信息。团队将很快与您联系。" | "我们已收到您的紧急求助。救援队伍将立即前往。" |
-| MS | "Kami telah menerima mesej anda..." | "Kami telah menerima mesej anda..." | "Amaran kecemasan diterima!" |
-| TA | "உங்கள் செய்தியைப் பெற்றோம்..." | "உங்கள் செய்தியைப் பெற்றோம்..." | "அவசர எச்சரிக்கை பெறப்பட்டது!" |
+| Language | FALSE_ALARM | UNCERTAIN | NON_URGENT | URGENT |
+|----------|-------------|-----------|------------|--------|
+| EN | "Sorry... tap Escalate" | "Please confirm if you are okay" | "Family notified; escalated as NON_URGENT" | "Escalated to operations as URGENT priority" |
+| ZH | "抱歉...可点击升级处理" | "请确认是否平安" | "家属已通知，非紧急升级" | "已按紧急优先级升级" |
+| MS | "Maaf... tekan Eskalasi" | "Sila sahkan anda okay" | "Keluarga dimaklumkan, bukan kecemasan" | "Dinaikkan sebagai keutamaan segera" |
+| TA | "மன்னிக்கவும்... Escalate அழுத்தவும்" | "நீங்கள் நலமா உறுதிசெய்யவும்" | "குடும்பம் அறிவிக்கப்பட்டது, NON_URGENT" | "அவசர முன்னுரிமையுடன் உயர்த்தப்பட்டது" |
 
 ---
 
@@ -253,7 +256,7 @@ Messages are sent in senior's native language + English:
 
 - Unit tests for validation and risk logic
 - Integration tests for end-to-end processing
-- Manual UAT with sample audios (LOW/HIGH/non-English scenarios)
+- Manual UAT with sample audios (FALSE_ALARM/URGENT/non-English scenarios)
 
 ---
 
@@ -278,7 +281,7 @@ Messages are sent in senior's native language + English:
 - AI actions persisted in `ai_actions` table
 - Family notification via Telegram with SMS fallback
 - Senior confirmation message sent (native language + English)
-- "I'm not okay" inline button for LOW/MEDIUM risk
+- Confirmation/Escalate inline buttons for UNCERTAIN/FALSE_ALARM flows
 - Escalation callback works when senior clicks button
 - Debug print statements show processing stages
 - One command starts full system

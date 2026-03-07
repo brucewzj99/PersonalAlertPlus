@@ -164,8 +164,14 @@ class NotificationService:
         is_escalation: bool = False,
     ) -> str:
         """Format the emergency notification message."""
-        emoji_map = {"HIGH": "🚨", "MEDIUM": "⚠️", "LOW": "ℹ️"}
+        emoji_map = {
+            "URGENT": "🚨",
+            "NON_URGENT": "⚠️",
+            "UNCERTAIN": "❓",
+            "FALSE_ALARM": "ℹ️",
+        }
         emoji = emoji_map.get(risk_level, "⚪")
+        risk_label = risk_level.replace("_", " ")
 
         header = "🚨 SENIOR ESCALATED ALERT" if is_escalation else f"{emoji} EMERGENCY ALERT"
 
@@ -190,7 +196,7 @@ class NotificationService:
             ])
 
         parts.extend([
-            f"Risk Level: {risk_level} ({risk_score:.0%})",
+            f"Risk Level: {risk_label} ({risk_score:.0%})",
             "",
             "Assessment:",
             summary,
@@ -221,8 +227,20 @@ class NotificationService:
             transcript=transcript, audio_url=audio_url, is_escalation=is_escalation
         )
 
-        sorted_contacts = sorted(contacts, key=lambda c: c.priority_order)
+        eligible_contacts = contacts
+        if risk_level == "UNCERTAIN":
+            eligible_contacts = [c for c in contacts if c.notify_on_uncertain]
+
+        sorted_contacts = sorted(eligible_contacts, key=lambda c: c.priority_order)
         results = []
+
+        if not sorted_contacts:
+            return [
+                {
+                    "success": False,
+                    "error": "No eligible contacts for this risk level",
+                }
+            ]
 
         for contact in sorted_contacts:
             for channel in self.channels:

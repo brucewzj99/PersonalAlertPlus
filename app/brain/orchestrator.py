@@ -25,87 +25,111 @@ logger = logging.getLogger(__name__)
 
 SENIOR_MESSAGES = {
     "en": {
-        "low": {
-            "native": "We have received your message and assessed that everything is fine. Your family members have been notified. If you need help, please don't hesitate to reach out.",
-            "english": "We received your message and assessed everything is fine. Your family has been notified. Stay safe!",
+        "false_alarm": {
+            "native": "Sorry, this does not look like a service request. If you still need help, please tap Escalate.",
+            "english": "Sorry, this does not look like a service request. If you still need help, tap Escalate.",
         },
-        "medium": {
-            "native": "We have received your message. Our team will follow up with you shortly to check on your status. Your family members have been notified.",
-            "english": "We received your message. Our team will follow up soon to check on you. Your family has been notified.",
+        "uncertain": {
+            "native": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
+            "english": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
         },
-        "high": {
-            "native": "We have received your emergency alert. We are notifying your family and the response team will be dispatched immediately to assist you.",
-            "english": "Emergency received! We are notifying your family and dispatching help immediately.",
+        "non_urgent": {
+            "native": "We received your alert. We are notifying your family and escalating this as non-urgent follow-up.",
+            "english": "We received your alert. Your family has been notified and this is escalated as non-urgent.",
+        },
+        "urgent": {
+            "native": "We have received your emergency alert. We are notifying your family and escalating to operations as urgent priority.",
+            "english": "Emergency received. We are notifying your family and escalating to operations with urgent priority.",
         },
     },
     "zh": {
-        "low": {
-            "native": "我们已经收到您的信息，经评估确认一切正常。您的家人已收到通知。如有需要，请随时联系我们。",
-            "english": "We received your message and assessed everything is fine. Your family has been notified. Stay safe!",
+        "false_alarm": {
+            "native": "抱歉，这看起来不是服务请求。如果您仍需要帮助，请点击“升级处理”。",
+            "english": "Sorry, this does not look like a service request. If you still need help, tap Escalate.",
         },
-        "medium": {
-            "native": "我们已经收到您的信息。团队将很快与您联系确认情况。您的家人已收到通知。",
-            "english": "We received your message. Our team will follow up soon to check on you. Your family has been notified.",
+        "uncertain": {
+            "native": "我们暂时无法完全确认您的情况。请确认您是否平安，若需要协助请点击“升级处理”。",
+            "english": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
         },
-        "high": {
-            "native": "我们已收到您的紧急求助。正在通知您的家人，救援队伍将立即前往帮助您。",
-            "english": "Emergency received! We are notifying your family and dispatching help immediately.",
+        "non_urgent": {
+            "native": "我们已收到您的警报。正在通知家属，并以非紧急个案升级给运营团队跟进。",
+            "english": "We received your alert. Your family has been notified and this is escalated as non-urgent.",
+        },
+        "urgent": {
+            "native": "我们已收到您的紧急警报。正在通知家属，并以紧急优先级升级给运营团队。",
+            "english": "Emergency received. We are notifying your family and escalating to operations with urgent priority.",
         },
     },
     "ms": {
-        "low": {
-            "native": "Kami telah menerima mesej anda dan menilai bahawa semuanya baik-baik sahaja. Keluarga anda telah dimaklumkan.",
-            "english": "We received your message and assessed everything is fine. Your family has been notified. Stay safe!",
+        "false_alarm": {
+            "native": "Maaf, ini nampaknya bukan permintaan bantuan. Jika anda masih perlukan bantuan, tekan Eskalasi.",
+            "english": "Sorry, this does not look like a service request. If you still need help, tap Escalate.",
         },
-        "medium": {
-            "native": "Kami telah menerima mesej anda. Pasukan kami akan menghubungi anda tidak lama lagi. Keluarga anda telah dimaklumkan.",
-            "english": "We received your message. Our team will follow up soon to check on you. Your family has been notified.",
+        "uncertain": {
+            "native": "Kami masih tidak pasti tentang keadaan anda. Sila sahkan anda okay, atau tekan Eskalasi jika perlukan bantuan.",
+            "english": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
         },
-        "high": {
-            "native": "Kami telah menerima amaran kecemasan anda. Kami sedang memberitahu keluarga anda dan pasukan bantuan akan dihantar dengan segera.",
-            "english": "Emergency received! We are notifying your family and dispatching help immediately.",
+        "non_urgent": {
+            "native": "Kami telah menerima amaran anda. Keluarga anda dimaklumkan dan kes ini dinaikkan sebagai bukan kecemasan.",
+            "english": "We received your alert. Your family has been notified and this is escalated as non-urgent.",
+        },
+        "urgent": {
+            "native": "Kami telah menerima amaran kecemasan anda. Kami memaklumkan keluarga dan menaikkan kepada operasi sebagai keutamaan segera.",
+            "english": "Emergency received. We are notifying your family and escalating to operations with urgent priority.",
         },
     },
     "ta": {
-        "low": {
-            "native": "உங்கள் செய்தியைப் பெற்றோம். எல்லாமே சரியாக உள்ளதாக மதிப்பிட்டோம். உங்கள் குடும்பத்தினருக்கு தெரியப்படுத்தப்பட்டது.",
-            "english": "We received your message and assessed everything is fine. Your family has been notified. Stay safe!",
+        "false_alarm": {
+            "native": "மன்னிக்கவும், இது சேவை கோரிக்கையாக தெரியவில்லை. இன்னும் உதவி தேவைப்பட்டால் 'Escalate' ஐ அழுத்தவும்.",
+            "english": "Sorry, this does not look like a service request. If you still need help, tap Escalate.",
         },
-        "medium": {
-            "native": "உங்கள் செய்தியைப் பெற்றோம். எங்கள் குழு விரைவில் உங்களைத் தொடர்பு கொள்ளும். உங்கள் குடும்பத்தினருக்கு தெரியப்படுத்தப்பட்டது.",
-            "english": "We received your message. Our team will follow up soon to check on you. Your family has been notified.",
+        "uncertain": {
+            "native": "உங்கள் நிலைமை பற்றி முழுமையாக உறுதியாக இல்லை. நீங்கள் நலமா என்று உறுதிசெய்யவும், உதவி வேண்டும் என்றால் Escalate அழுத்தவும்.",
+            "english": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
         },
-        "high": {
-            "native": "உங்கள் அவசர எச்சரிக்கை பெறப்பட்டது! உங்கள் குடும்பத்தினருக்கு தெரியப்படுத்தி உதவி உடனடியாக அனுப்பப்படுகிறது.",
-            "english": "Emergency received! We are notifying your family and dispatching help immediately.",
+        "non_urgent": {
+            "native": "உங்கள் எச்சரிக்கை பெறப்பட்டது. உங்கள் குடும்பத்தினருக்கு தெரிவிக்கப்பட்டு, இது அவசரமல்லாததாக குழுவிற்கு உயர்த்தப்பட்டுள்ளது.",
+            "english": "We received your alert. Your family has been notified and this is escalated as non-urgent.",
+        },
+        "urgent": {
+            "native": "உங்கள் அவசர எச்சரிக்கை பெறப்பட்டது. உங்கள் குடும்பத்தினருக்கு தெரிவித்து, செயல்பாட்டு குழுவிற்கு மிக அவசர முன்னுரிமையுடன் உயர்த்தப்பட்டுள்ளது.",
+            "english": "Emergency received. We are notifying your family and escalating to operations with urgent priority.",
         },
     },
     "nan": {
-        "low": {
-            "native": "阮已经收到您的信息，评估一切正常。您的家人已经通知。",
-            "english": "We received your message and assessed everything is fine. Your family has been notified. Stay safe!",
+        "false_alarm": {
+            "native": "歹势，这看起来毋是服务请求。若你阁需要帮助，请按 Escalate。",
+            "english": "Sorry, this does not look like a service request. If you still need help, tap Escalate.",
         },
-        "medium": {
-            "native": "阮已经收到您的信息。团队会联系您确认情况。您的家人已经通知。",
-            "english": "We received your message. Our team will follow up soon to check on you. Your family has been notified.",
+        "uncertain": {
+            "native": "阮暂时袂完全确定你的情况。请确认你是否平安，若需要帮忙请按 Escalate。",
+            "english": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
         },
-        "high": {
-            "native": "阮已经收到您的紧急求助。正在通知您的家人，救援队伍会立刻去帮助您。",
-            "english": "Emergency received! We are notifying your family and dispatching help immediately.",
+        "non_urgent": {
+            "native": "阮已经收到你的警报。你的家人会收到通知，也会用非紧急案件升级给团队。",
+            "english": "We received your alert. Your family has been notified and this is escalated as non-urgent.",
+        },
+        "urgent": {
+            "native": "阮已经收到你的紧急警报。会通知家人，并以紧急优先升级到运营团队。",
+            "english": "Emergency received. We are notifying your family and escalating to operations with urgent priority.",
         },
     },
     "yue": {
-        "low": {
-            "native": "我哋已經收到你嘅信息，評估一切正常。你嘅家人已經通知咗。",
-            "english": "We received your message and assessed everything is fine. Your family has been notified. Stay safe!",
+        "false_alarm": {
+            "native": "唔好意思，呢个睇落唔似服务请求。如果你仲需要帮手，请按 Escalate。",
+            "english": "Sorry, this does not look like a service request. If you still need help, tap Escalate.",
         },
-        "medium": {
-            "native": "我哋已經收到你嘅信息。團隊會聯繫你確認情況。你嘅家人已經通知咗。",
-            "english": "We received your message. Our team will follow up soon to check on you. Your family has been notified.",
+        "uncertain": {
+            "native": "我哋暂时未能完全确认你嘅情况。请确认你是否安全；如需协助，请按 Escalate。",
+            "english": "We are not fully sure about your situation yet. Please confirm if you are okay, or tap Escalate if you need assistance.",
         },
-        "high": {
-            "native": "我哋已經收到你嘅緊急求助。正通知你嘅家人，救援隊伍會即刻去幫你。",
-            "english": "Emergency received! We are notifying your family and dispatching help immediately.",
+        "non_urgent": {
+            "native": "我哋已经收到你嘅警报。你嘅家人会收到通知，个案亦会以非紧急方式升级跟进。",
+            "english": "We received your alert. Your family has been notified and this is escalated as non-urgent.",
+        },
+        "urgent": {
+            "native": "我哋已经收到你嘅紧急警报。会通知你嘅家人，并以紧急优先级升级到运营团队。",
+            "english": "Emergency received. We are notifying your family and escalating to operations with urgent priority.",
         },
     },
 }
@@ -315,8 +339,13 @@ class BrainOrchestrator:
         )
         print(f"[BrainOrchestrator] Summary generated")
 
-        requires_operator = analysis.risk_level in ["HIGH", "MEDIUM"]
-        status = "escalated" if analysis.risk_level == "HIGH" else "pending"
+        requires_operator = analysis.risk_level in ["URGENT", "NON_URGENT"]
+        if analysis.risk_level in ["URGENT", "NON_URGENT"]:
+            status = "escalated"
+        elif analysis.risk_level == "FALSE_ALARM":
+            status = "closed"
+        else:
+            status = "pending_confirmation"
 
         print(
             f"[BrainOrchestrator] Step 8: Updating alert in database (risk: {analysis.risk_level}, requires_operator: {requires_operator})"
@@ -337,12 +366,13 @@ class BrainOrchestrator:
         print(
             f"[BrainOrchestrator] Step 9: Handling risk actions for {analysis.risk_level}..."
         )
-        if analysis.risk_level in ["HIGH", "MEDIUM", "LOW"]:
+        if analysis.risk_level in ["URGENT", "NON_URGENT", "UNCERTAIN", "FALSE_ALARM"]:
             await self._handle_risk_actions(
                 alert_id=alert_id,
                 risk_level=analysis.risk_level,
                 senior=senior,
                 summary=summary,
+                risk_score=analysis.risk_score,
                 transcript=content,
                 audio_url=payload.audio_url,
             )
@@ -383,9 +413,14 @@ class BrainOrchestrator:
         risk_key = risk_level.lower()
 
         messages = SENIOR_MESSAGES.get(lang, SENIOR_MESSAGES["en"])
-        risk_messages = messages.get(risk_key, messages["low"])
+        risk_messages = messages.get(risk_key, messages["uncertain"])
 
-        emoji_map = {"high": "🚨", "medium": "⚠️", "low": "✅"}
+        emoji_map = {
+            "urgent": "🚨",
+            "non_urgent": "⚠️",
+            "uncertain": "❓",
+            "false_alarm": "ℹ️",
+        }
         emoji = emoji_map.get(risk_key, "ℹ️")
 
         confirmation_text = f"{emoji} *Status Update*\n\n"
@@ -395,21 +430,63 @@ class BrainOrchestrator:
 
         inline_keyboard = None
 
-        if risk_key in ["low", "medium"] and alert_id:
-            not_okay_text = {
-                "en": "I'm not okay",
-                "zh": "我不舒服",
-                "ms": "Saya tidak baik",
-                "ta": "எனக்கு பிரச்சினை இருக்கு",
-                "nan": "我不舒服",
-                "yue": "我唔舒服",
+        if risk_key == "uncertain" and alert_id:
+            confirm_text = {
+                "en": "I am okay",
+                "zh": "我没事",
+                "ms": "Saya okay",
+                "ta": "நான் நலமாக இருக்கிறேன்",
+                "nan": "我没代志",
+                "yue": "我无事",
             }
-            btn_text = not_okay_text.get(lang, not_okay_text["en"])
+            escalate_text = {
+                "en": "Escalate",
+                "zh": "升级处理",
+                "ms": "Eskalasi",
+                "ta": "Escalate",
+                "nan": "升级处理",
+                "yue": "升级处理",
+            }
 
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
             inline_keyboard = InlineKeyboardMarkup(
-                [[InlineKeyboardButton(btn_text, callback_data=f"escalate:{alert_id}")]]
+                [
+                    [
+                        InlineKeyboardButton(
+                            confirm_text.get(lang, confirm_text["en"]),
+                            callback_data=f"confirm_ok:{alert_id}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            escalate_text.get(lang, escalate_text["en"]),
+                            callback_data=f"escalate_non_urgent:{alert_id}",
+                        )
+                    ],
+                ]
+            )
+        elif risk_key == "false_alarm" and alert_id:
+            escalate_text = {
+                "en": "Escalate",
+                "zh": "升级处理",
+                "ms": "Eskalasi",
+                "ta": "Escalate",
+                "nan": "升级处理",
+                "yue": "升级处理",
+            }
+
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+            inline_keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            escalate_text.get(lang, escalate_text["en"]),
+                            callback_data=f"escalate_non_urgent:{alert_id}",
+                        )
+                    ]
+                ]
             )
 
         try:
@@ -461,6 +538,7 @@ class BrainOrchestrator:
                 phone_number=row.get("phone_number"),
                 telegram_user_id=row.get("telegram_user_id"),
                 priority_order=row.get("priority_order", 1),
+                notify_on_uncertain=row.get("notify_on_uncertain", False),
             )
             for row in response.data
         ]
@@ -522,9 +600,13 @@ class BrainOrchestrator:
         risk_level: str,
         senior: SeniorContext,
         summary: str,
+        risk_score: float,
         transcript: str | None = None,
         audio_url: str | None = None,
     ) -> None:
+        if risk_level in ["UNCERTAIN", "FALSE_ALARM"]:
+            return
+
         contacts = self._get_emergency_contacts(senior.id)
 
         if not contacts:
@@ -540,10 +622,20 @@ class BrainOrchestrator:
             contacts=contacts,
             senior=senior,
             risk_level=risk_level,
-            risk_score=1.0,
+            risk_score=risk_score,
             summary=summary,
             transcript=transcript,
             audio_url=audio_url,
+        )
+
+        self._action_logger.log_action(
+            alert_id=alert_id,
+            action_type="escalate_to_operator",
+            action_status="success",
+            details={
+                "priority": "urgent" if risk_level == "URGENT" else "non-urgent",
+                "risk_level": risk_level,
+            },
         )
 
         for result in results:

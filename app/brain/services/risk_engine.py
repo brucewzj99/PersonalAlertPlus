@@ -25,11 +25,11 @@ class RiskEngine:
         final_risk_score = analysis.risk_score
         final_reasoning = analysis.reasoning
 
-        if keywords_found and analysis.risk_level == "LOW":
-            final_risk_level = "MEDIUM"
+        if keywords_found and analysis.risk_level == "FALSE_ALARM":
+            final_risk_level = "NON_URGENT"
             final_risk_score = max(0.5, final_risk_score)
             final_reasoning = (
-                f"Elevated to MEDIUM due to emergency keywords: {', '.join(keywords_found)}. "
+                f"Elevated to NON_URGENT due to emergency keywords: {', '.join(keywords_found)}. "
                 f"{final_reasoning}"
             )
 
@@ -37,23 +37,25 @@ class RiskEngine:
             kw in ["fall", "fell", "unconscious", "chest pain", "can't breathe"]
             for kw in keywords_found
         ):
-            final_risk_level = "HIGH"
+            final_risk_level = "URGENT"
             final_risk_score = max(0.85, final_risk_score)
             final_reasoning = (
-                f"Elevated to HIGH due to critical emergency keywords: {', '.join(keywords_found)}. "
+                f"Elevated to URGENT due to critical emergency keywords: {', '.join(keywords_found)}. "
                 f"{final_reasoning}"
             )
 
-        if has_critical_medical and final_risk_level in ["LOW", "MEDIUM"]:
-            final_risk_level = "MEDIUM" if final_risk_level == "LOW" else final_risk_level
+        if has_critical_medical and final_risk_level in ["FALSE_ALARM", "UNCERTAIN"]:
+            final_risk_level = "NON_URGENT" if final_risk_level == "FALSE_ALARM" else final_risk_level
             final_risk_score = max(0.6, final_risk_score)
             final_reasoning = (
                 f"Adjusted due to known medical conditions. {final_reasoning}"
             )
 
-        if final_risk_score < 0.3 and final_risk_level != "LOW":
-            final_risk_level = "LOW"
-            final_reasoning = f"Low confidence score adjusted to LOW. {final_reasoning}"
+        if final_risk_score < 0.3 and final_risk_level in ["URGENT", "NON_URGENT"]:
+            final_risk_level = "UNCERTAIN"
+            final_reasoning = (
+                f"Low confidence score adjusted to UNCERTAIN. {final_reasoning}"
+            )
 
         return RiskAnalysis(
             risk_level=final_risk_level,
@@ -72,11 +74,17 @@ class RiskEngine:
         keywords: list[str],
     ) -> str:
         """Generate human-readable summary for operators."""
-        emoji_map = {"HIGH": "🔴", "MEDIUM": "🟠", "LOW": "🟢"}
+        emoji_map = {
+            "URGENT": "🔴",
+            "NON_URGENT": "🟠",
+            "UNCERTAIN": "🟡",
+            "FALSE_ALARM": "🟢",
+        }
         emoji = emoji_map.get(risk_level, "⚪")
+        risk_label = risk_level.replace("_", " ")
 
         summary_parts = [
-            f"{emoji} {risk_level} RISK ALERT",
+            f"{emoji} {risk_label} ALERT",
             "",
             f"Senior: {senior_name}",
             f"Confidence: {risk_score:.0%}",
