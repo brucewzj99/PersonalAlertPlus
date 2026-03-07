@@ -30,6 +30,17 @@ logger = logging.getLogger(__name__)
 GROQ_STT_BASE = "api.groq.com"
 
 
+def _looks_like_english_text(text: str) -> bool:
+    sample = (text or "").strip()
+    if len(sample) < 3:
+        return False
+
+    ascii_count = sum(1 for ch in sample if ord(ch) < 128)
+    alpha_count = sum(1 for ch in sample if "a" <= ch.lower() <= "z")
+    ascii_ratio = ascii_count / max(len(sample), 1)
+    return ascii_ratio >= 0.9 and alpha_count >= 3
+
+
 def _normalize_language_code(value: str | None) -> str | None:
     if not value:
         return None
@@ -92,15 +103,19 @@ async def process_audio(
 
     # Normalize language code for comparison (e.g. "en", "zh")
     lang = _normalize_language_code(language_detected)
+    if not lang and _looks_like_english_text(transcript):
+        lang = "en"
     if not lang and preferred_language_hint:
         lang = _normalize_language_code(preferred_language_hint)
+    if lang != "en" and _looks_like_english_text(transcript):
+        lang = "en"
 
     # Step 2: If English, no translation
     if lang == "en":
         return SpeechToTextResult(
             transcript=transcript,
-            language_detected=language_detected or "en",
-            translated_text=transcript,
+            language_detected="en",
+            translated_text=None,
         )
 
     # Step 3: Non-English → translate to English

@@ -120,11 +120,15 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * View live alerts
   * See transcription + language
   * View risk score & reasoning
+  * View AI assessment details (`ai_assessment`), confidence score, and flagged keywords
   * Confirm or override AI decision
+  * Close a case directly from the case details view
   * Add a case directly into `few_shot_examples` with one click
   * Manage emergency contacts in a dedicated pop-up interface
   * View senior medical notes during contact management
   * Edit base AI risk prompt in a Settings tab
+  * Log structured case actions (dispatch ambulance / call family / mark attended) with explicit action timestamps
+  * Select contacted family members as multi-select pill options when logging `call_family`
 
 * This builds a supervised AI improvement cycle.
 
@@ -215,6 +219,7 @@ This provides a safety net in case AI misclassifies the situation.
 
 * Transcription
 * Language detection
+* Translation-quality guardrail (if translation looks suspicious, downgrade NON_URGENT to UNCERTAIN)
 * Risk classification
 * Confidence scoring
 
@@ -231,7 +236,9 @@ This provides a safety net in case AI misclassifies the situation.
 
   * Reviews recommendation
   * Confirms dispatch or override
-  * Logs decision
+  * Can close case directly in operator workflow
+  * Logs decision and actions to `public.operator_actions` with `action_time` (default now)
+  * Captures who was contacted for family-call actions in `action_payload`
   * Rates AI accuracy
 
 ### Step 6 – Feedback Loop
@@ -393,6 +400,11 @@ The backend retrieves senior details (name, phone, address, medical notes) using
 
 * Fresh-start bootstrap SQL is provided at `database/000-master.sql`.
 * Migration rule: never modify historical migration files; append new numbered migrations only.
+* Latest additive migrations for operator action logging:
+
+  * `database/001-operator-actions-table-and-backfill.sql` → adds `public.operator_actions`, backfills legacy action flags, keeps compatibility trigger
+  * `database/002-remove-legacy-alert-action-columns.sql` → removes legacy action flag columns from `public.alerts` once app migration is complete
+  * `database/003-add-alert-ai-assessment-column.sql` → adds `ai_assessment` in `public.alerts` for concise reasoning display in operator dashboard
 
 * Core Tables:
 
@@ -400,6 +412,7 @@ The backend retrieves senior details (name, phone, address, medical notes) using
   * emergency_contacts
   * alerts
   * ai_actions
+  * operator_actions
   * few_shot_examples
   * senior_conversations
   * prompt_settings
@@ -459,6 +472,7 @@ Emergency alerts triggered by seniors.
 | translated_text | text | No | English translation of transcript |
 | risk_level | text | No | URGENT/NON_URGENT/UNCERTAIN/FALSE_ALARM classification |
 | risk_score | numeric | No | AI confidence score (0.0-1.0) |
+| ai_assessment | text | No | Concise AI reasoning text shown to operators |
 | analysis_summary | text | No | AI-generated summary for operators |
 | keywords | jsonb | No | Array of keywords extracted |
 | status | text | No | pending/pending_confirmation/escalated/closed |
@@ -467,6 +481,8 @@ Emergency alerts triggered by seniors.
 | processing_status | text | No | pending/processing/completed/failed |
 | processing_error | text | No | Error message if processing failed |
 | created_at | timestamptz | Yes | Alert creation timestamp |
+
+* Note: operator intervention details are modeled in `public.operator_actions` as generic action rows with timestamps and payload metadata.
 
 ---
 
@@ -489,13 +505,30 @@ Automated AI-triggered actions based on risk assessment.
 
 ---
 
-### 6.5 🔐 Security Model
+### 6.5 🧾 Operator Actions Table (`public.operator_actions`)
+
+Generic operator action log for each case.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | uuid | Yes | Auto-generated primary key |
+| case_id | uuid | Yes | Foreign key to alerts(id) |
+| operator | text | Yes | Operator label/id (for hackathon default: Operator 1) |
+| actions_taken | text | Yes | Generic action key (e.g. dispatch_ambulance, call_family, mark_attended, incident_note) |
+| action_payload | jsonb | No | Flexible structured metadata (e.g., contacted family member IDs/names, notes) |
+| action_time | timestamptz | Yes | Time action occurred (defaults to now) |
+| created_at | timestamptz | Yes | Row creation timestamp |
+
+---
+
+### 6.6 🔐 Security Model
 
   * Seniors have no direct DB access
   * Backend uses Supabase service role
   * Operators authenticate via Supabase Auth
   * Row Level Security enabled
   * Public access blocked
+  * `public.operator_actions` protected by RLS with service-role full access and authenticated read policy
 
 ---
 

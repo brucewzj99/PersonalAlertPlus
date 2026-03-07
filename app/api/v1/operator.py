@@ -1,6 +1,7 @@
 import re
 import logging
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Query
@@ -154,6 +155,103 @@ def _normalize_alert_update(update_payload: dict[str, Any]) -> dict[str, Any]:
     return update_payload
 
 
+def _normalize_action_name(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return ""
+    normalized = re.sub(r"[\s\-]+", "_", raw)
+    aliases = {
+        "ambulance": "dispatch_ambulance",
+        "ambulance_dispatched": "dispatch_ambulance",
+        "dispatchambulance": "dispatch_ambulance",
+        "family": "call_family",
+        "family_called": "call_family",
+        "callfamily": "call_family",
+        "attended": "mark_attended",
+        "is_attended": "mark_attended",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _serialize_action_time(value: Any) -> str:
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            dt = datetime.now(timezone.utc)
+    else:
+        dt = datetime.now(timezone.utc)
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+def _collect_operator_actions(update: AlertUpdate) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+
+    raw_events = update.operator_actions or []
+    for event in raw_events:
+        if not isinstance(event, dict):
+            continue
+        action_name = _normalize_action_name(
+            event.get("actions_taken") or event.get("action")
+        )
+        if not action_name:
+            continue
+        payload = event.get("action_payload")
+        if not isinstance(payload, dict):
+            payload = {}
+
+        events.append(
+            {
+                "actions_taken": action_name,
+                "action_payload": payload,
+                "action_time": _serialize_action_time(
+                    event.get("action_time") or update.action_time
+                ),
+            }
+        )
+
+    if update.ambulance_dispatched is True:
+        events.append(
+            {
+                "actions_taken": "dispatch_ambulance",
+                "action_payload": {},
+                "action_time": _serialize_action_time(update.action_time),
+            }
+        )
+    if update.family_called is True:
+        events.append(
+            {
+                "actions_taken": "call_family",
+                "action_payload": {},
+                "action_time": _serialize_action_time(update.action_time),
+            }
+        )
+    if update.is_attended is True:
+        events.append(
+            {
+                "actions_taken": "mark_attended",
+                "action_payload": {},
+                "action_time": _serialize_action_time(update.action_time),
+            }
+        )
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for event in events:
+        key = f"{event['actions_taken']}|{event['action_time']}|{event['action_payload']}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(event)
+    return deduped
+
+
 def _is_missing_column_error(exc: Exception, column_name: str) -> bool:
     if not isinstance(exc, APIError):
         return False
@@ -166,6 +264,95 @@ def _is_missing_table_error(exc: Exception, table_name: str) -> bool:
         return False
     message = str(exc)
     return "does not exist" in message and table_name in message
+
+
+def _insert_operator_actions(
+    alert_id: str,
+    operator_name: str,
+    events: list[dict[str, Any]],
+) -> None:
+    if not events:
+        return
+
+    rows = [
+        {
+            "case_id": alert_id,
+            "operator": operator_name,
+            "actions_taken": event["actions_taken"],
+            "action_payload": event.get("action_payload") or {},
+            "action_time": event["action_time"],
+        }
+        for event in events
+    ]
+
+    try:
+        db.client.table("operator_actions").insert(rows).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "operator_actions"):
+            logger.warning(
+                "operator_actions table missing. Run DB migration before action logging."
+            )
+            return
+        raise
+
+
+def _attach_operator_action_state(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not alerts:
+        return alerts
+
+    for alert in alerts:
+        alert["ambulance_dispatched"] = False
+        alert["family_called"] = False
+        alert["is_attended"] = False
+        alert["dispatch_ambulance_at"] = None
+        alert["family_called_at"] = None
+        alert["operator_actions"] = []
+
+    alert_ids = [str(alert.get("id") or "") for alert in alerts if alert.get("id")]
+    if not alert_ids:
+        return alerts
+
+    try:
+        response = (
+            db.client.table("operator_actions")
+            .select("case_id, operator, actions_taken, action_payload, action_time, created_at")
+            .in_("case_id", alert_ids)
+            .order("action_time", desc=True)
+            .limit(500)
+            .execute()
+        )
+    except Exception as exc:
+        if _is_missing_table_error(exc, "operator_actions"):
+            return alerts
+        raise
+
+    action_rows = _ensure_dict_rows(response.data)
+    actions_by_case: dict[str, list[dict[str, Any]]] = {}
+    for row in action_rows:
+        case_id = str(row.get("case_id") or "")
+        if not case_id:
+            continue
+        actions_by_case.setdefault(case_id, []).append(row)
+
+    for alert in alerts:
+        case_id = str(alert.get("id") or "")
+        case_actions = actions_by_case.get(case_id, [])
+        alert["operator_actions"] = case_actions
+
+        for action in case_actions:
+            action_name = _normalize_action_name(action.get("actions_taken"))
+            if action_name == "dispatch_ambulance":
+                alert["ambulance_dispatched"] = True
+                if alert.get("dispatch_ambulance_at") is None:
+                    alert["dispatch_ambulance_at"] = action.get("action_time")
+            elif action_name == "call_family":
+                alert["family_called"] = True
+                if alert.get("family_called_at") is None:
+                    alert["family_called_at"] = action.get("action_time")
+            elif action_name == "mark_attended":
+                alert["is_attended"] = True
+
+    return alerts
 
 
 def _extract_missing_column(exc: Exception, table_name: str) -> str | None:
@@ -258,6 +445,8 @@ async def get_alerts(
         else:
             raise
 
+    alerts = _attach_operator_action_state(alerts)
+
     if not include_closed:
         alerts = [
             alert
@@ -295,7 +484,7 @@ async def override_alert(
     """Override an alert's risk level and optionally save as a few-shot example."""
     current = (
         db.client.table("alerts")
-        .select("id, senior_id, transcription, ambulance_dispatched, family_called")
+        .select("id, senior_id, transcription, resolved_by")
         .eq("id", alert_id)
         .limit(1)
         .execute()
@@ -306,11 +495,38 @@ async def override_alert(
     current_row = current_rows[0]
     transcript = current_row.get("transcription")
 
-    update_payload = _normalize_alert_update(update.model_dump(exclude_none=True))
+    raw_update_payload = update.model_dump(exclude_none=True)
+    update_payload = _normalize_alert_update(
+        {
+            key: value
+            for key, value in raw_update_payload.items()
+            if key
+            not in {
+                "operator",
+                "action_time",
+                "operator_actions",
+                "ambulance_dispatched",
+                "family_called",
+                "is_attended",
+            }
+        }
+    )
+
+    operator_name = (
+        update.operator
+        or cast(str | None, current_row.get("resolved_by"))
+        or "Operator 1"
+    )
+    update_payload["resolved_by"] = operator_name
+
+    action_events = _collect_operator_actions(update)
+
     updated = _update_alert_with_fallback(alert_id, update_payload)
     updated_rows = _ensure_dict_rows(updated.data)
     if not updated_rows:
         raise HTTPException(status_code=404, detail="Alert not found")
+
+    _insert_operator_actions(alert_id, operator_name, action_events)
 
     if save_as_example and transcript and update.risk_level:
         db.create_few_shot_example(
@@ -318,14 +534,13 @@ async def override_alert(
         )
 
     updated_row = updated_rows[0]
+    updated_row = _attach_operator_action_state([updated_row])[0]
 
-    old_ambulance = bool(current_row.get("ambulance_dispatched"))
-    old_family = bool(current_row.get("family_called"))
-    new_ambulance = bool(updated_row.get("ambulance_dispatched"))
-    new_family = bool(updated_row.get("family_called"))
-
-    ambulance_dispatched_now = (not old_ambulance) and new_ambulance
-    family_called_now = (not old_family) and new_family
+    action_names = {
+        _normalize_action_name(event.get("actions_taken")) for event in action_events
+    }
+    ambulance_dispatched_now = "dispatch_ambulance" in action_names
+    family_called_now = "call_family" in action_names
 
     senior_id = current_row.get("senior_id")
     if isinstance(senior_id, str) and (ambulance_dispatched_now or family_called_now):

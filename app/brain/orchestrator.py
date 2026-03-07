@@ -4,6 +4,7 @@ import base64
 import logging
 from typing import Any, cast
 
+from postgrest.exceptions import APIError
 from telegram import Bot
 
 from app.brain.schemas import (
@@ -367,7 +368,11 @@ class BrainOrchestrator:
 
         print("[BrainOrchestrator] Step 7: Applying guardrails...")
         analysis = self._risk_engine.apply_guardrails(
-            analysis, translated_text or content, senior.medical_notes
+            analysis,
+            translated_text or content,
+            senior.medical_notes,
+            original_transcript=content,
+            translated_text=translated_text,
         )
         print(
             f"[BrainOrchestrator] Final classification: {analysis.risk_level} ({analysis.risk_score})"
@@ -417,6 +422,7 @@ class BrainOrchestrator:
             translated_text=translated_text,
             risk_level=risk_level_db,
             risk_score=analysis.risk_score,
+            ai_assessment=analysis.reasoning,
             analysis_summary=summary,
             keywords=analysis.keywords,
             requires_operator=requires_operator,
@@ -743,6 +749,7 @@ class BrainOrchestrator:
         translated_text: str | None,
         risk_level: str,
         risk_score: float,
+        ai_assessment: str,
         analysis_summary: str,
         keywords: list[str],
         requires_operator: bool,
@@ -758,6 +765,7 @@ class BrainOrchestrator:
                 "translated_text": translated_text,
                 "risk_level": risk_level_normalized,
                 "risk_score": risk_score,
+                "ai_assessment": ai_assessment,
                 "analysis_summary": analysis_summary,
                 "keywords": keywords,
                 "requires_operator": requires_operator,
@@ -768,7 +776,15 @@ class BrainOrchestrator:
             }
         if audio_url is not None:
             update_payload["audio_url"] = audio_url
-        self._db.client.table("alerts").update(update_payload).eq("id", alert_id).execute()
+        try:
+            self._db.client.table("alerts").update(update_payload).eq("id", alert_id).execute()
+        except APIError as exc:
+            message = str(exc)
+            if "alerts.ai_assessment" in message and "does not exist" in message:
+                update_payload.pop("ai_assessment", None)
+                self._db.client.table("alerts").update(update_payload).eq("id", alert_id).execute()
+            else:
+                raise
         print(f"[BrainOrchestrator] DEBUG Alert updated in Supabase: {alert_id}")
 
     async def _handle_risk_actions(

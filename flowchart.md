@@ -21,6 +21,7 @@ flowchart TB
         API6["GET /api/v1/operator/seniors/overview"]
         API7["GET/PUT /api/v1/operator/settings/risk-prompt"]
         API8["CRUD /api/v1/operator/few-shot-examples"]
+        API9["PATCH /api/v1/operator/alerts/{alert_id}/override"]
     end
 
     subgraph Brain["🧠 Brain Layer (app/brain/)"]
@@ -58,6 +59,7 @@ flowchart TB
         DB4[(AI Actions)]
         DB5[(Few Shot Examples)]
         DB6[(Prompt Settings)]
+        DB7[(Operator Actions)]
     end
 
     subgraph External["🔌 External Services"]
@@ -122,6 +124,8 @@ flowchart TB
     API6 --> DB1
     API8 --> DB5
     API7 --> DB6
+    API9 --> DB3
+    API9 --> DB7
 ```
 
 ---
@@ -137,6 +141,7 @@ sequenceDiagram
     participant AI as OpenAI API
     participant DB as Supabase
     participant Notif as Telegram/Twilio
+    participant Op as Operator Dashboard
 
     Note over User,DB: Step 1: User Registration Flow
     User->>TB: /start command
@@ -159,7 +164,7 @@ sequenceDiagram
     TB->>API: POST /api/v1/brain/alerts/ingest<br/>{senior_id, audio_url, ...}
     API->>Brain: Process alert
 
-    Note over Brain,DB: Step 3: AI Processing
+    Note over Brain,DB: Step 3: AI Processing + Translation Guardrails
     Brain->>DB: Get senior details
     DB-->>Brain: {name, address, medical_notes}
     Brain->>DB: Get emergency contacts
@@ -173,6 +178,8 @@ sequenceDiagram
     Brain->>AI: Translate to English (if needed)
     AI-->>Brain: English transcript
     
+    Brain->>Brain: Check translation consistency (if suspicious, downgrade toward UNCERTAIN)
+
     Brain->>AI: Classify risk (GPT)
     AI-->>Brain: {risk_level: URGENT, score: 0.94, reasoning: ...}
     
@@ -184,6 +191,12 @@ sequenceDiagram
     Brain->>Notif: Send Telegram to emergency contact
     Notif-->>Brain: Message sent ✓
     Brain->>DB: Log notification action
+
+    Note over Op,DB: Step 5: Operator Action Logging
+    Op->>API: PATCH /api/v1/operator/alerts/{id}/override
+    API->>DB: Update alert status/override/close
+    API->>DB: Insert operator action row<br/>(action_time + payload)
+    DB-->>Op: Action saved with action_time
 ```
 
 ---
@@ -195,6 +208,7 @@ erDiagram
     SENIORS ||--o{ ALERTS : "has many"
     SENIORS ||--o{ EMERGENCY_CONTACTS : "has many"
     ALERTS ||--o{ AI_ACTIONS : "has many"
+    ALERTS ||--o{ OPERATOR_ACTIONS : "has many"
     ALERTS ||--o{ SENIOR_CONVERSATIONS : "has many"
 
     SENIORS {
@@ -232,6 +246,7 @@ erDiagram
         text language_detected
         text risk_level
         numeric risk_score
+        text ai_assessment
         text status
         bool requires_operator
         text resolved_by
@@ -253,6 +268,16 @@ erDiagram
         int attempt_count
         text external_ref
         text error_message
+        timestamptz created_at
+    }
+
+    OPERATOR_ACTIONS {
+        uuid id PK
+        uuid case_id FK
+        text operator
+        text actions_taken
+        jsonb action_payload
+        timestamptz action_time
         timestamptz created_at
     }
 
@@ -435,6 +460,9 @@ sequenceDiagram
 | `app/brain/prompts.py` | LLM prompts & keyword detection |
 | `app/services/database.py` | Supabase client wrapper |
 | `app/services/storage.py` | Supabase Storage upload |
+| `database/001-operator-actions-table-and-backfill.sql` | Add `operator_actions` table + backfill + compatibility trigger |
+| `database/002-remove-legacy-alert-action-columns.sql` | Remove legacy operator action columns from `alerts` |
+| `database/003-add-alert-ai-assessment-column.sql` | Add `alerts.ai_assessment` for concise AI reasoning |
 | `app/config.py` | Configuration & env variables |
 | `app/main.py` | FastAPI app entry point |
 
@@ -449,6 +477,7 @@ sequenceDiagram
 | `/api/v1/brain/alerts/ingest` | POST | Process new alert |
 | `/api/v1/brain/health` | GET | Brain service health |
 | `/api/v1/operator/alerts` | GET | Operator alert feed |
+| `/api/v1/operator/alerts/{alert_id}/override` | PATCH | Override case + persist operator action log (with `action_time` and payload) |
 | `/api/v1/operator/seniors/overview` | GET | Senior dashboard with medical notes |
 | `/api/v1/operator/settings/risk-prompt` | GET/PUT | Read/update base AI risk prompt |
 | `/api/v1/operator/few-shot-examples` | GET/POST/PATCH/DELETE | Manage few-shot examples |

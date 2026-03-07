@@ -8,7 +8,10 @@ interface Alert {
   id: string;
   senior_id: string;
   risk_level: RiskLevel;
-  risk_score: number;
+  risk_score?: number | null;
+  ai_assessment?: string | null;
+  analysis_summary?: string | null;
+  keywords?: string[] | null;
   transcription?: string | null;
   translated_text?: string | null;
   language_detected?: string | null;
@@ -18,8 +21,11 @@ interface Alert {
   is_resolved?: boolean | null;
   created_at: string;
   ambulance_dispatched?: boolean | null;
+  dispatch_ambulance_at?: string | null;
   family_called?: boolean | null;
+  family_called_at?: string | null;
   is_attended?: boolean | null;
+  operator_actions?: OperatorActionRecord[];
   seniors?: {
     id?: string;
     full_name: string;
@@ -76,11 +82,24 @@ interface EmergencyContact {
 
 interface AlertOverridePayload {
   risk_level?: RiskLevel;
-  ambulance_dispatched?: boolean;
-  family_called?: boolean;
-  is_attended?: boolean;
   is_resolved?: boolean;
   status?: string;
+  operator?: string;
+  operator_actions?: OperatorActionInput[];
+}
+
+interface OperatorActionInput {
+  actions_taken: string;
+  action_time: string;
+  action_payload?: Record<string, unknown>;
+}
+
+interface OperatorActionRecord {
+  case_id: string;
+  operator: string;
+  actions_taken: string;
+  action_payload?: Record<string, unknown>;
+  action_time?: string;
 }
 
 interface NewContactDraft {
@@ -103,6 +122,21 @@ const defaultContactDraft: NewContactDraft = {
 
 const isClosedAlert = (alert: Alert): boolean => {
   return alert.is_resolved === true || (alert.status || '').toLowerCase() === 'closed';
+};
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: 'English',
+  zh: 'Chinese',
+  ms: 'Malay',
+  ta: 'Tamil',
+  nan: 'Hokkien',
+  yue: 'Cantonese',
+};
+
+const getLanguageLabel = (language?: string | null): string => {
+  const key = (language || '').trim().toLowerCase();
+  if (!key) return '-';
+  return LANGUAGE_LABELS[key] || language || '-';
 };
 
 const getEnglishViewText = (alert: Alert): string => {
@@ -136,6 +170,35 @@ const resolveAudioUrl = (audioUrl?: string | null): string | null => {
   return `${supabaseUrl}/storage/v1/object/public/${bucket}/${path}`;
 };
 
+const toDateTimeLocalValue = (source?: string | Date | null): string => {
+  const date = source ? new Date(source) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+};
+
+const toIsoFromDateTimeLocal = (value: string): string => {
+  if (!value) return new Date().toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+};
+
+const getAssessmentText = (alert: Alert): string => {
+  const direct = (alert.ai_assessment || '').trim();
+  if (direct) return direct;
+
+  const summary = (alert.analysis_summary || '').trim();
+  if (!summary) return 'No AI assessment available.';
+
+  const marker = 'Assessment:';
+  const markerIndex = summary.indexOf(marker);
+  if (markerIndex >= 0) {
+    const extracted = summary.slice(markerIndex + marker.length).trim();
+    if (extracted) return extracted;
+  }
+  return summary;
+};
+
 const App: React.FC = () => {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [fewShotExamples, setFewShotExamples] = useState<FewShotExample[]>([]);
@@ -151,8 +214,11 @@ const App: React.FC = () => {
   const [newContactBySenior, setNewContactBySenior] = useState<Record<string, NewContactDraft>>({});
 
   const [selectedCase, setSelectedCase] = useState<Alert | null>(null);
-  const [localAmbulanceDispatched, setLocalAmbulanceDispatched] = useState<boolean | null>(null);
-  const [localFamilyCalled, setLocalFamilyCalled] = useState<boolean | null>(null);
+  const [dispatchAmbulanceNow, setDispatchAmbulanceNow] = useState(false);
+  const [callFamilyNow, setCallFamilyNow] = useState(false);
+  const [dispatchActionTime, setDispatchActionTime] = useState('');
+  const [familyActionTime, setFamilyActionTime] = useState('');
+  const [selectedFamilyContactIds, setSelectedFamilyContactIds] = useState<string[]>([]);
   const [caseContacts, setCaseContacts] = useState<EmergencyContact[]>([]);
   const [caseReplies, setCaseReplies] = useState<ConversationReply[]>([]);
   const [selectedCaseTab, setSelectedCaseTab] = useState<'details' | 'family'>('details');
@@ -325,19 +391,57 @@ const App: React.FC = () => {
   const handleSave = async () => {
     if (!selectedCase) return;
 
-    const updates: AlertOverridePayload = { is_attended: true };
+    const operatorActions: OperatorActionInput[] = [
+      {
+        actions_taken: 'mark_attended',
+        action_time: new Date().toISOString(),
+      },
+    ];
+
+    if (dispatchAmbulanceNow) {
+      operatorActions.push({
+        actions_taken: 'dispatch_ambulance',
+        action_time: toIsoFromDateTimeLocal(dispatchActionTime),
+      });
+    }
+
+    if (callFamilyNow) {
+      if (selectedFamilyContactIds.length === 0) {
+        alert('Please select at least one family member contacted.');
+        return;
+      }
+      const selectedContacts = caseContacts.filter((contact) => selectedFamilyContactIds.includes(contact.id));
+      operatorActions.push({
+        actions_taken: 'call_family',
+        action_time: toIsoFromDateTimeLocal(familyActionTime),
+        action_payload: {
+          contact_ids: selectedContacts.map((contact) => contact.id),
+          contact_names: selectedContacts.map((contact) => contact.name),
+        },
+      });
+    }
+
+    const updates: AlertOverridePayload = {
+      operator: 'Operator 1',
+      operator_actions: operatorActions,
+    };
     if (newSeverity !== selectedCase.risk_level) updates.risk_level = newSeverity;
-    if (localAmbulanceDispatched !== null) updates.ambulance_dispatched = localAmbulanceDispatched;
-    if (localFamilyCalled !== null) updates.family_called = localFamilyCalled;
+    if (newSeverity === 'FALSE_ALARM') {
+      updates.status = 'closed';
+      updates.is_resolved = true;
+    }
 
     try {
       const updatedCase = await updateAlertInDB(selectedCase.id, updates);
-      setSelectedCase(updatedCase);
-      setLocalAmbulanceDispatched(null);
-      setLocalFamilyCalled(null);
+      await fetchAlerts();
+      setDispatchAmbulanceNow(false);
+      setCallFamilyNow(false);
+      setDispatchActionTime('');
+      setFamilyActionTime('');
+      setSelectedFamilyContactIds([]);
+      setSelectedCase(null);
       if (isClosedAlert(updatedCase)) {
         setActiveTab('closed');
-        setSelectedCase(null);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Action failed';
@@ -345,13 +449,65 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCloseCase = async () => {
+    if (!selectedCase) return;
+
+    const updates: AlertOverridePayload = {
+      status: 'closed',
+      is_resolved: true,
+      operator: 'Operator 1',
+      operator_actions: [
+        {
+          actions_taken: 'close_case',
+          action_time: new Date().toISOString(),
+        },
+      ],
+    };
+
+    try {
+      await updateAlertInDB(selectedCase.id, updates);
+      await fetchAlerts();
+      setDispatchAmbulanceNow(false);
+      setCallFamilyNow(false);
+      setDispatchActionTime('');
+      setFamilyActionTime('');
+      setSelectedFamilyContactIds([]);
+      setSelectedCase(null);
+      setActiveTab('closed');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to close case';
+      alert(message);
+    }
+  };
+
   const handleIntervention = (type: 'ambulance' | 'family') => {
     if (!selectedCase) return;
     if (type === 'ambulance') {
-      setLocalAmbulanceDispatched((prev) => (prev === null ? !Boolean(selectedCase.ambulance_dispatched) : !prev));
+      if (selectedCase.ambulance_dispatched || dispatchAmbulanceNow) return;
+      setDispatchAmbulanceNow(true);
+      setDispatchActionTime(toDateTimeLocalValue(new Date()));
     }
     if (type === 'family') {
-      setLocalFamilyCalled((prev) => (prev === null ? !Boolean(selectedCase.family_called) : !prev));
+      if (selectedCase.family_called || callFamilyNow) return;
+      setCallFamilyNow(true);
+      setFamilyActionTime(toDateTimeLocalValue(new Date()));
+    }
+  };
+
+  const openCaseDetails = (alert: Alert) => {
+    setSelectedCase(alert);
+    setNewSeverity(alert.risk_level);
+    setDispatchAmbulanceNow(false);
+    setCallFamilyNow(false);
+    setDispatchActionTime(toDateTimeLocalValue(alert.dispatch_ambulance_at || new Date()));
+    setFamilyActionTime(toDateTimeLocalValue(alert.family_called_at || new Date()));
+    setSelectedFamilyContactIds([]);
+    setSelectedCaseTab('details');
+    fetchConversationReplies(alert.id);
+    if (alert.seniors?.id) {
+      fetchContactsForSelectedCase(alert.seniors.id);
+    } else {
+      setCaseContacts([]);
     }
   };
 
@@ -368,7 +524,10 @@ const App: React.FC = () => {
   };
 
   const addCaseAsFewShotExample = async (caseItem: Alert, riskLevel: RiskLevel) => {
-    const transcript = (caseItem.transcription || '').trim();
+    const transcript =
+      riskLevel === 'FALSE_ALARM'
+        ? getEnglishViewText(caseItem).trim()
+        : (caseItem.transcription || '').trim();
     if (!transcript) {
       alert('No transcript available for this case.');
       return;
@@ -454,17 +613,27 @@ const App: React.FC = () => {
     await fetchContactsForSenior(seniorId);
   };
 
-  const sortedAlerts = useMemo(
+  const sortedAlertsNewestFirst = useMemo(
     () => [...alerts].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
     [alerts],
   );
 
-  const openAlerts = sortedAlerts.filter((a) => !isClosedAlert(a));
-  const closedAlerts = sortedAlerts.filter(isClosedAlert);
+  const openAlerts = useMemo(
+    () =>
+      sortedAlertsNewestFirst
+        .filter((a) => !isClosedAlert(a))
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
+    [sortedAlertsNewestFirst],
+  );
+  const closedAlerts = useMemo(
+    () => sortedAlertsNewestFirst.filter(isClosedAlert),
+    [sortedAlertsNewestFirst],
+  );
   const urgent = openAlerts.filter((a) => a.risk_level === 'URGENT');
   const nonUrgent = openAlerts.filter((a) => a.risk_level === 'NON_URGENT');
   const uncertain = openAlerts.filter((a) => a.risk_level === 'UNCERTAIN');
   const falseAlarm = openAlerts.filter((a) => a.risk_level === 'FALSE_ALARM');
+  const casesToHandleCount = urgent.length + nonUrgent.length + uncertain.length + falseAlarm.length;
   const pendingActions = urgent.filter((a) => !a.ambulance_dispatched || !a.family_called).length;
 
   const CaseListItem = ({ alert }: { alert: Alert }) => {
@@ -477,19 +646,7 @@ const App: React.FC = () => {
     return (
       <div
         className={`case-item ${isHandled ? 'handled-item' : ''}`}
-        onClick={() => {
-          setSelectedCase(alert);
-          setNewSeverity(alert.risk_level);
-          setLocalAmbulanceDispatched(null);
-          setLocalFamilyCalled(null);
-          setSelectedCaseTab('details');
-          fetchConversationReplies(alert.id);
-          if (alert.seniors?.id) {
-            fetchContactsForSelectedCase(alert.seniors.id);
-          } else {
-            setCaseContacts([]);
-          }
-        }}
+        onClick={() => openCaseDetails(alert)}
       >
         <div className="case-item-header">
           <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -574,11 +731,17 @@ const App: React.FC = () => {
       <header>
         <div className="brand">
           <div className="brand-logo">🛟</div>
-          <div className="brand-name">GALE Alert Alarm</div>
+          <div className="brand-name">GALE Alert Plus</div>
         </div>
         <div className="monitoring-stats" style={{ display: 'flex', gap: '2rem', alignItems: 'center' }}>
           <div className="monitoring-count">{pendingActions} Pending Actions</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Operator Dashboard</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Operator 1</div>
+          <button
+            className={`header-nav-btn ${activeTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setActiveTab('settings')}
+          >
+            Settings
+          </button>
         </div>
       </header>
 
@@ -588,7 +751,7 @@ const App: React.FC = () => {
             className={`dashboard-tab-btn ${activeTab === 'to_handle' ? 'active' : ''}`}
             onClick={() => setActiveTab('to_handle')}
           >
-            Cases To Handle ({openAlerts.length})
+            Cases To Handle ({casesToHandleCount})
           </button>
           <button
             className={`dashboard-tab-btn ${activeTab === 'closed' ? 'active' : ''}`}
@@ -601,12 +764,6 @@ const App: React.FC = () => {
             onClick={() => setActiveTab('seniors')}
           >
             Senior Dashboard ({seniors.length})
-          </button>
-          <button
-            className={`dashboard-tab-btn ${activeTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setActiveTab('settings')}
-          >
-            Settings
           </button>
         </div>
 
@@ -634,19 +791,7 @@ const App: React.FC = () => {
                 <div
                   key={alert.id}
                   className="case-item"
-                  onClick={() => {
-                    setSelectedCase(alert);
-                    setNewSeverity(alert.risk_level);
-                    setLocalAmbulanceDispatched(null);
-                    setLocalFamilyCalled(null);
-                    setSelectedCaseTab('details');
-                    fetchConversationReplies(alert.id);
-                    if (alert.seniors?.id) {
-                      fetchContactsForSelectedCase(alert.seniors.id);
-                    } else {
-                      setCaseContacts([]);
-                    }
-                  }}
+                  onClick={() => openCaseDetails(alert)}
                 >
                   <div className="case-item-header">
                     <span>{alert.seniors?.full_name || 'Unknown Senior'}</span>
@@ -667,8 +812,8 @@ const App: React.FC = () => {
         )}
 
         {activeTab === 'seniors' && (
-          <section className="case-section">
-            <div className="case-section-header">
+          <section className="case-section senior-dashboard-section">
+            <div className="case-section-header senior-dashboard-header">
               <span>Senior Overview</span>
               <span className="severity-badge">{seniors.length} seniors</span>
             </div>
@@ -681,7 +826,7 @@ const App: React.FC = () => {
                       <span className="severity-badge">Open: {senior.open_cases}</span>
                     </div>
                     <p>Phone: {senior.phone_number || '-'}</p>
-                    <p>Language: {senior.preferred_language || '-'}</p>
+                    <p>Language: {getLanguageLabel(senior.preferred_language)}</p>
                     <p>Address: {senior.address || '-'}</p>
                     <p>
                       Latest: {senior.latest_alert?.risk_level || '-'} / {senior.latest_alert?.status || '-'}
@@ -866,7 +1011,7 @@ const App: React.FC = () => {
                   <strong>Phone:</strong> {contactModalSenior.phone_number || 'Not listed'}
                 </div>
                 <div style={{ fontSize: '0.9rem', marginBottom: '0.75rem' }}>
-                  <strong>Language:</strong> {contactModalSenior.preferred_language || 'Not specified'}
+                  <strong>Language:</strong> {getLanguageLabel(contactModalSenior.preferred_language)}
                 </div>
                 <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Medical Notes</div>
                 <div style={{ color: 'var(--text-muted)', maxHeight: '130px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
@@ -1042,7 +1187,7 @@ const App: React.FC = () => {
 
       {selectedCase && (
         <div className="modal-overlay">
-          <div className="modal-card">
+          <div className="modal-card case-modal-card">
             <div
               className="focus-case-header"
               style={{
@@ -1061,7 +1206,7 @@ const App: React.FC = () => {
                 x
               </button>
             </div>
-            <div style={{ padding: '2rem' }}>
+            <div className="case-modal-body">
               <div className="dashboard-tabs" role="tablist" style={{ marginBottom: '1.5rem' }}>
                 <button
                   className={`dashboard-tab-btn ${selectedCaseTab === 'details' ? 'active' : ''}`}
@@ -1155,6 +1300,34 @@ const App: React.FC = () => {
                     </div>
                   </div>
 
+                  <div className="container-box" style={{ marginBottom: '1rem' }}>
+                    <div
+                      style={{
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        color: 'var(--text-muted)',
+                        marginBottom: '0.5rem',
+                      }}
+                    >
+                      AI ASSESSMENT
+                    </div>
+                    <div style={{ fontSize: '0.9rem', marginBottom: '0.35rem' }}>
+                      <strong>Confidence:</strong>{' '}
+                      {typeof selectedCase.risk_score === 'number'
+                        ? `${Math.round(selectedCase.risk_score * 100)}%`
+                        : '-'}
+                    </div>
+                    <div style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+                      <strong>Keywords:</strong>{' '}
+                      {Array.isArray(selectedCase.keywords) && selectedCase.keywords.length > 0
+                        ? selectedCase.keywords.join(', ')
+                        : 'None'}
+                    </div>
+                    <div style={{ fontSize: '0.95rem', whiteSpace: 'pre-wrap', color: 'var(--text-main)' }}>
+                      {getAssessmentText(selectedCase)}
+                    </div>
+                  </div>
+
                   {(selectedCase.senior_response || caseReplies.length > 0) && (
                     <div className="container-box" style={{ marginBottom: '1rem' }}>
                       <div
@@ -1219,21 +1392,81 @@ const App: React.FC = () => {
                         marginBottom: '1.5rem',
                       }}
                     >
-                      <button className="btn-emergency" onClick={() => handleIntervention('ambulance')}>
-                        {localAmbulanceDispatched !== null
-                          ? (localAmbulanceDispatched ? 'AMBULANCE EN ROUTE' : 'DISPATCH AMBULANCE')
-                          : (selectedCase.ambulance_dispatched ? 'AMBULANCE EN ROUTE' : 'DISPATCH AMBULANCE')}
+                      <button
+                        className="btn-emergency"
+                        onClick={() => handleIntervention('ambulance')}
+                        disabled={Boolean(selectedCase.ambulance_dispatched || dispatchAmbulanceNow)}
+                        style={
+                          Boolean(selectedCase.ambulance_dispatched || dispatchAmbulanceNow)
+                            ? { opacity: 0.5, cursor: 'not-allowed', background: '#6b7280' }
+                            : {}
+                        }
+                      >
+                        {Boolean(selectedCase.ambulance_dispatched || dispatchAmbulanceNow)
+                          ? 'AMBULANCE EN ROUTE'
+                          : 'DISPATCH AMBULANCE'}
                       </button>
                       <button
                         className="btn-family"
                         onClick={() => handleIntervention('family')}
-                        disabled={caseContacts.length === 0}
+                        disabled={caseContacts.length === 0 || Boolean(selectedCase.family_called || callFamilyNow)}
                         style={caseContacts.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                       >
-                        {localFamilyCalled !== null
-                          ? (localFamilyCalled ? 'FAMILY CONTACTED' : 'CALL FAMILY MEMBER')
-                          : (selectedCase.family_called ? 'FAMILY CONTACTED' : 'CALL FAMILY MEMBER')}
+                        FAMILY MEMBER CALLED
                       </button>
+                    </div>
+                  )}
+
+                  {!isClosedAlert(selectedCase) && dispatchAmbulanceNow && (
+                    <div className="container-box" style={{ marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.4rem' }}>
+                        Dispatch Ambulance Action Time
+                      </div>
+                      <input
+                        className="mini-input"
+                        type="datetime-local"
+                        value={dispatchActionTime}
+                        onChange={(e) => setDispatchActionTime(e.target.value)}
+                      />
+                    </div>
+                  )}
+
+                  {!isClosedAlert(selectedCase) && callFamilyNow && (
+                    <div className="container-box" style={{ marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.4rem' }}>
+                        Family Contact Action Time
+                      </div>
+                      <input
+                        className="mini-input"
+                        type="datetime-local"
+                        value={familyActionTime}
+                        onChange={(e) => setFamilyActionTime(e.target.value)}
+                        style={{ marginBottom: '0.65rem' }}
+                      />
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.45rem' }}>
+                        Which family member did you contact?
+                      </div>
+                      <div className="pill-wrap">
+                        {caseContacts.map((contact) => {
+                          const isSelected = selectedFamilyContactIds.includes(contact.id);
+                          return (
+                            <button
+                              key={contact.id}
+                              type="button"
+                              className={`pill-chip ${isSelected ? 'active' : ''}`}
+                              onClick={() => {
+                                setSelectedFamilyContactIds((prev) =>
+                                  prev.includes(contact.id)
+                                    ? prev.filter((id) => id !== contact.id)
+                                    : [...prev, contact.id],
+                                );
+                              }}
+                            >
+                              {contact.name}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
 
@@ -1273,7 +1506,7 @@ const App: React.FC = () => {
                             fontSize: '0.8rem',
                           }}
                         >
-                          AI REINFORCEMENT
+                          UPDATE RISK CATEGORIZATION
                         </label>
                         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                           <select
@@ -1299,13 +1532,22 @@ const App: React.FC = () => {
                         </div>
                       </div>
 
-                      <button
-                        className="action-btn"
-                        style={{ width: '100%', padding: '1.25rem', fontSize: '1.25rem', marginTop: '1rem' }}
-                        onClick={handleSave}
-                      >
-                        SAVE & UPDATE
-                      </button>
+                      <div className="mini-row" style={{ marginTop: '1rem' }}>
+                        <button
+                          className="action-btn"
+                          style={{ flex: 1, padding: '1rem 1.25rem', fontSize: '1rem' }}
+                          onClick={handleSave}
+                        >
+                          SAVE & UPDATE
+                        </button>
+                        <button
+                          className="dashboard-tab-btn"
+                          style={{ flex: 1, padding: '1rem 1.25rem', fontSize: '1rem' }}
+                          onClick={handleCloseCase}
+                        >
+                          CLOSE CASE
+                        </button>
+                      </div>
                     </>
                   )}
                 </>

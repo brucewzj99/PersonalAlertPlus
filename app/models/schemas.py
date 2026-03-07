@@ -1,3 +1,6 @@
+from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -72,3 +75,6 @@ class AlertUpdate(BaseModel):
     family_called: bool | None = None
     is_attended: bool | None = None
     is_resolved: bool | None = None
+    operator: str | None = None
+    action_time: datetime | None = None
+    operator_actions: list[dict[str, Any]] | None = None
