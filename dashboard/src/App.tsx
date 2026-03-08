@@ -31,6 +31,7 @@ interface Alert {
     family_called?: boolean | null;
     family_called_at?: string | null;
     is_attended?: boolean | null;
+    operator_remarks?: string | null;
     operator_actions?: OperatorActionRecord[];
     ai_recommendation?: AiRecommendationRecord | null;
     seniors?: {
@@ -96,6 +97,7 @@ interface AlertOverridePayload {
     is_resolved?: boolean;
     status?: string;
     operator?: string;
+    operator_remarks?: string | null;
     operator_actions?: OperatorActionInput[];
 }
 
@@ -602,6 +604,7 @@ const App: React.FC = () => {
     const [selectedFamilyContactIds, setSelectedFamilyContactIds] = useState<
         string[]
     >([]);
+    const [operatorRemarks, setOperatorRemarks] = useState("");
     const [caseContacts, setCaseContacts] = useState<EmergencyContact[]>([]);
     const [caseReplies, setCaseReplies] = useState<ConversationReply[]>([]);
     const [caseAiActions, setCaseAiActions] = useState<AiActionRecord[]>([]);
@@ -883,6 +886,7 @@ const App: React.FC = () => {
             includeCloseCase: boolean,
         ): OperatorActionInput[] | null => {
             const actions: OperatorActionInput[] = [];
+            const sanitizedOperatorRemarks = operatorRemarks.trim();
 
             if (!selectedCase.is_attended) {
                 actions.push({
@@ -929,6 +933,9 @@ const App: React.FC = () => {
                 actions.push({
                     actions_taken: "close_case",
                     action_time: new Date().toISOString(),
+                    action_payload: sanitizedOperatorRemarks
+                        ? { operator_remarks: sanitizedOperatorRemarks }
+                        : undefined,
                 });
             }
 
@@ -943,6 +950,7 @@ const App: React.FC = () => {
 
         const updates: AlertOverridePayload = {
             operator: "Operator 1",
+            operator_remarks: operatorRemarks.trim() || null,
             operator_actions: operatorActions,
         };
         if (newSeverity !== selectedCase.risk_level)
@@ -954,13 +962,14 @@ const App: React.FC = () => {
 
         try {
             const updatedCase = await updateAlertInDB(selectedCase.id, updates);
-            void fetchAlerts().catch(() => undefined);
+            await fetchAlerts();
             setDispatchAmbulanceNow(false);
             setDispatchDestination(DEFAULT_DISPATCH_DESTINATION);
             setCallFamilyNow(false);
             setDispatchActionTime("");
             setFamilyActionTime("");
             setSelectedFamilyContactIds([]);
+            setOperatorRemarks("");
             setSelectedCase(null);
             setCaseAiActions([]);
             setToastMessage("Case has been updated.");
@@ -979,6 +988,7 @@ const App: React.FC = () => {
 
         const buildOperatorActions = (): OperatorActionInput[] | null => {
             const actions: OperatorActionInput[] = [];
+            const sanitizedOperatorRemarks = operatorRemarks.trim();
 
             if (dispatchAmbulanceNow) {
                 const dispatchLabel =
@@ -1017,6 +1027,9 @@ const App: React.FC = () => {
             actions.push({
                 actions_taken: "close_case",
                 action_time: new Date().toISOString(),
+                action_payload: sanitizedOperatorRemarks
+                    ? { operator_remarks: sanitizedOperatorRemarks }
+                    : undefined,
             });
 
             return actions;
@@ -1032,6 +1045,7 @@ const App: React.FC = () => {
             status: "closed",
             is_resolved: true,
             operator: "Operator 1",
+            operator_remarks: operatorRemarks.trim() || null,
             operator_actions: operatorActions,
         };
 
@@ -1043,6 +1057,7 @@ const App: React.FC = () => {
             setDispatchActionTime("");
             setFamilyActionTime("");
             setSelectedFamilyContactIds([]);
+            setOperatorRemarks("");
             setSelectedCase(null);
             setCaseAiActions([]);
             setActiveTab("closed");
@@ -1089,6 +1104,7 @@ const App: React.FC = () => {
             toDateTimeLocalValue(alert.family_called_at || new Date()),
         );
         setSelectedFamilyContactIds([]);
+        setOperatorRemarks(alert.operator_remarks || "");
         setSelectedCaseTab("details");
         fetchConversationReplies(alert.id);
         fetchCaseAiActions(alert.id);
@@ -2319,6 +2335,7 @@ const App: React.FC = () => {
                                 onClick={() => {
                                     setSelectedCase(null);
                                     setCaseAiActions([]);
+                                    setOperatorRemarks("");
                                 }}
                             >
                                 x
@@ -2751,6 +2768,36 @@ const App: React.FC = () => {
                                             </div>
                                         )}
 
+                                    {isClosedAlert(selectedCase) && (
+                                        <div
+                                            className="container-box"
+                                            style={{ marginBottom: "1rem" }}
+                                        >
+                                            <div
+                                                style={{
+                                                    fontSize: "0.75rem",
+                                                    fontWeight: 700,
+                                                    color: "var(--text-muted)",
+                                                    marginBottom: "0.5rem",
+                                                }}
+                                            >
+                                                OPERATOR REMARKS
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: "0.92rem",
+                                                    whiteSpace: "pre-wrap",
+                                                    color: "var(--text-main)",
+                                                }}
+                                            >
+                                                {selectedCase.operator_remarks &&
+                                                selectedCase.operator_remarks.trim()
+                                                    ? selectedCase.operator_remarks
+                                                    : "No remarks provided."}
+                                            </div>
+                                        </div>
+                                    )}
+
                                     {!isClosedAlert(selectedCase) && (
                                         <div
                                             className="container-box recommendation-box"
@@ -3155,6 +3202,36 @@ const App: React.FC = () => {
                                                         </option>
                                                     </select>
                                                 </div>
+                                            </div>
+
+                                            <div
+                                                style={{ marginBottom: "1rem" }}
+                                            >
+                                                <label
+                                                    style={{
+                                                        display: "block",
+                                                        fontWeight: 700,
+                                                        marginBottom: "0.5rem",
+                                                        fontSize: "0.8rem",
+                                                    }}
+                                                >
+                                                    OPERATOR REMARKS (OPTIONAL)
+                                                </label>
+                                                <textarea
+                                                    className="mini-input"
+                                                    rows={3}
+                                                    value={operatorRemarks}
+                                                    onChange={(e) =>
+                                                        setOperatorRemarks(
+                                                            e.target.value,
+                                                        )
+                                                    }
+                                                    placeholder="Add notes before closing this case."
+                                                    style={{
+                                                        resize: "vertical",
+                                                        minHeight: "5.5rem",
+                                                    }}
+                                                />
                                             </div>
 
                                             <div
