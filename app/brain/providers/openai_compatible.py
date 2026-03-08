@@ -37,7 +37,11 @@ class OpenAICompatibleClient:
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10)
     )
-    async def transcribe_audio(self, audio_bytes: bytes) -> tuple[str, str | None]:
+    async def transcribe_audio(
+        self,
+        audio_bytes: bytes,
+        language_hint: str | None = None,
+    ) -> tuple[str, str | None]:
         """Transcribe audio using Whisper API. Returns (transcript, detected_language)."""
         files = {
             "file": ("audio.ogg", audio_bytes, "audio/ogg"),
@@ -46,6 +50,8 @@ class OpenAICompatibleClient:
             "model": self.transcription_model,
             "response_format": "json",
         }
+        if language_hint:
+            data["language"] = language_hint
         headers = {"Authorization": f"Bearer {self.api_key_stt}"}
 
         try:

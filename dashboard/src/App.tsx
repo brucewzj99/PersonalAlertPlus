@@ -32,12 +32,17 @@ interface Alert {
     family_called_at?: string | null;
     is_attended?: boolean | null;
     operator_actions?: OperatorActionRecord[];
+    ai_recommendation?: AiRecommendationRecord | null;
     seniors?: {
         id?: string;
         full_name: string;
         phone_number?: string;
+        sip_url?: string;
         address?: string;
         preferred_language?: string;
+        birth_year?: number;
+        birth_month?: number;
+        birth_day?: number;
     };
 }
 
@@ -81,6 +86,7 @@ interface EmergencyContact {
     name: string;
     relationship?: string | null;
     phone_number?: string | null;
+    sip_url?: string | null;
     priority_order: number;
     notify_on_uncertain: boolean;
 }
@@ -107,6 +113,28 @@ interface OperatorActionRecord {
     action_time?: string;
 }
 
+interface AiRecommendationRecord {
+    case_id: string;
+    recommended_actions?: string[];
+    recommended_labels?: string[];
+    rationale?: string;
+    confidence?: number;
+    context_alert_ids?: string[];
+    created_at?: string;
+}
+
+interface AiActionRecord {
+    id: string;
+    action_type: string;
+    action_status: string;
+    details?: Record<string, unknown>;
+    provider?: string | null;
+    attempt_count?: number;
+    external_ref?: string | null;
+    error_message?: string | null;
+    created_at?: string;
+}
+
 interface NewContactDraft {
     name: string;
     relationship: string;
@@ -124,6 +152,13 @@ const defaultContactDraft: NewContactDraft = {
 };
 
 const FAMILY_CONTACT_SIP_URI = "sip:brucedev@sip.linphone.org";
+
+const toSipUri = (value?: string | null): string => {
+    const raw = (value || "").trim();
+    if (!raw) return FAMILY_CONTACT_SIP_URI;
+    if (raw.toLowerCase().startsWith("sip:")) return raw;
+    return `sip:${raw}`;
+};
 
 const isClosedAlert = (alert: Alert): boolean => {
     return (
@@ -143,6 +178,34 @@ const LANGUAGE_LABELS: Record<string, string> = {
 
 const SINGAPORE_COUNTRY_CODE = "+65";
 const SINGAPORE_PHONE_DIGITS = 8;
+const API_BASE_URL = (import.meta.env.VITE_BACKEND_API_URL || "").replace(
+    /\/+$/,
+    "",
+);
+
+const buildApiUrl = (path: string): string => {
+    if (!path) return API_BASE_URL;
+    if (path.startsWith("http://") || path.startsWith("https://")) return path;
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath;
+};
+
+const apiFetch = (path: string, init?: RequestInit): Promise<Response> => {
+    const endpoint = buildApiUrl(path);
+    const headers = new Headers(init?.headers || undefined);
+
+    if (!headers.has("Accept")) {
+        headers.set("Accept", "application/json");
+    }
+    if (!headers.has("ngrok-skip-browser-warning")) {
+        headers.set("ngrok-skip-browser-warning", "true");
+    }
+
+    return fetch(endpoint, {
+        ...init,
+        headers,
+    });
+};
 
 const DISPATCH_DESTINATION_OPTIONS: Array<{
     value: DispatchDestination;
@@ -272,6 +335,32 @@ const toLocalSingaporePhoneDigits = (value?: string | null): string => {
     return digitsOnly.slice(0, SINGAPORE_PHONE_DIGITS);
 };
 
+const getSeniorBirthDateDisplay = (
+    birthYear?: number,
+    birthMonth?: number,
+    birthDay?: number,
+): string => {
+    if (!birthYear || !birthMonth || !birthDay) return "-";
+    const date = new Date(birthYear, birthMonth - 1, birthDay);
+    if (Number.isNaN(date.getTime())) return "-";
+    return date.toLocaleDateString();
+};
+
+const getSeniorAge = (
+    birthYear?: number,
+    birthMonth?: number,
+    birthDay?: number,
+): string => {
+    if (!birthYear || !birthMonth || !birthDay) return "-";
+    const today = new Date();
+    let age = today.getFullYear() - birthYear;
+    const hasHadBirthday =
+        today.getMonth() + 1 > birthMonth ||
+        (today.getMonth() + 1 === birthMonth && today.getDate() >= birthDay);
+    if (!hasHadBirthday) age -= 1;
+    return age >= 0 ? String(age) : "-";
+};
+
 const getAssessmentText = (alert: Alert): string => {
     const direct = (alert.ai_assessment || "").trim();
     if (direct) return direct;
@@ -357,6 +446,21 @@ const getOperatorActionTitle = (actionName?: string | null): string => {
         .join(" ");
 };
 
+const getAiActionTitle = (actionName?: string | null): string => {
+    const normalized = normalizeOperatorActionName(actionName);
+    if (normalized === "notify_family") return "Family Notified";
+    if (normalized === "classify_risk") return "Risk Classified";
+    if (normalized === "transcribe_audio") return "Audio Transcribed";
+    if (normalized === "escalate_to_operator") return "Escalated to Operator";
+    if (normalized === "operator_action_recommendation")
+        return "AI Recommended Actions";
+    if (!normalized) return "AI Action";
+    return normalized
+        .split("_")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+};
+
 const toReadableValue = (value: unknown): string => {
     if (Array.isArray(value)) {
         return value
@@ -405,6 +509,68 @@ const getOperatorActionDetails = (
         .join(" | ");
 };
 
+const getAiActionDetails = (action: AiActionRecord): string | null => {
+    const details = action.details;
+    if (!details) return null;
+
+    const description = details.description;
+    if (typeof description === "string" && description.trim()) {
+        const transcriptPreview = details.transcript_preview;
+        if (
+            typeof transcriptPreview === "string" &&
+            transcriptPreview.trim()
+        ) {
+            return `${description} Audio captured: "${transcriptPreview}"`;
+        }
+        if (normalizeOperatorActionName(action.action_type) === "notify_family") {
+            const contact = details.contact_name;
+            if (typeof contact === "string" && contact.trim()) {
+                return `${description} Contact: ${contact}.`;
+            }
+        }
+        return description;
+    }
+
+    const actionType = normalizeOperatorActionName(action.action_type);
+    if (actionType === "notify_family") {
+        const contact = details.contact_name;
+        const channel = details.channel;
+        if (typeof contact === "string" && contact.trim()) {
+            return `Contacted: ${contact}${typeof channel === "string" ? ` via ${channel}` : ""}`;
+        }
+    }
+
+    if (actionType === "operator_action_recommendation") {
+        const labels = details.recommended_labels;
+        const rationale = details.rationale;
+        const confidence = details.confidence;
+        const parts: string[] = [];
+        if (Array.isArray(labels) && labels.length > 0) {
+            parts.push(`Recommended: ${labels.join(", ")}`);
+        }
+        if (typeof rationale === "string" && rationale.trim()) {
+            parts.push(`Reason: ${rationale}`);
+        }
+        if (typeof confidence === "number") {
+            parts.push(`Confidence: ${Math.round(confidence * 100)}%`);
+        }
+        return parts.length > 0 ? parts.join(" | ") : null;
+    }
+
+    const items = Object.entries(details).filter(
+        ([key, value]) =>
+            value !== null && value !== undefined && key !== "raw_response",
+    );
+    if (items.length === 0) return null;
+
+    return items
+        .map(
+            ([key, value]) =>
+                `${key.replace(/_/g, " ")}: ${toReadableValue(value)}`,
+        )
+        .join(" | ");
+};
+
 const App: React.FC = () => {
     const [alerts, setAlerts] = useState<Alert[]>([]);
     const [fewShotExamples, setFewShotExamples] = useState<FewShotExample[]>(
@@ -438,17 +604,18 @@ const App: React.FC = () => {
     >([]);
     const [caseContacts, setCaseContacts] = useState<EmergencyContact[]>([]);
     const [caseReplies, setCaseReplies] = useState<ConversationReply[]>([]);
+    const [caseAiActions, setCaseAiActions] = useState<AiActionRecord[]>([]);
     const [selectedCaseTab, setSelectedCaseTab] = useState<
-        "details" | "family" | "actions"
+        "details" | "family" | "actions" | "ai_actions"
     >("details");
     const [newSeverity, setNewSeverity] = useState<RiskLevel>("UNCERTAIN");
     const [activeTab, setActiveTab] = useState<DashboardTab>("to_handle");
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-    const callFamilyContactViaLinphone = () => {
+    const callFamilyContactViaLinphone = (sipUrl?: string | null) => {
         const link = document.createElement("a");
-        link.href = FAMILY_CONTACT_SIP_URI;
+        link.href = toSipUri(sipUrl);
         link.style.display = "none";
         document.body.appendChild(link);
         link.click();
@@ -463,7 +630,7 @@ const App: React.FC = () => {
     };
 
     const fetchAlerts = async () => {
-        const response = await fetch(
+        const response = await apiFetch(
             "/api/v1/operator/alerts?limit=100&include_closed=true",
         );
         if (!response.ok)
@@ -473,7 +640,7 @@ const App: React.FC = () => {
     };
 
     const fetchFewShotExamples = async () => {
-        const response = await fetch(
+        const response = await apiFetch(
             "/api/v1/operator/few-shot-examples?limit=30",
         );
         if (!response.ok)
@@ -485,7 +652,7 @@ const App: React.FC = () => {
     };
 
     const fetchSeniors = async () => {
-        const response = await fetch("/api/v1/operator/seniors/overview");
+        const response = await apiFetch("/api/v1/operator/seniors/overview");
         if (!response.ok)
             throw new Error(`Failed to fetch seniors (${response.status})`);
         const data = (await response.json()) as SeniorOverview[];
@@ -493,7 +660,7 @@ const App: React.FC = () => {
     };
 
     const fetchRiskPrompt = async () => {
-        const response = await fetch("/api/v1/operator/settings/risk-prompt");
+        const response = await apiFetch("/api/v1/operator/settings/risk-prompt");
         if (!response.ok)
             throw new Error(`Failed to fetch risk prompt (${response.status})`);
         const data = (await response.json()) as {
@@ -506,7 +673,7 @@ const App: React.FC = () => {
     };
 
     const fetchContactsForSenior = async (seniorId: string) => {
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/seniors/${seniorId}/emergency-contacts`,
         );
         if (!response.ok)
@@ -520,7 +687,7 @@ const App: React.FC = () => {
 
     const fetchContactsForSelectedCase = async (seniorId: string) => {
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `/api/v1/operator/seniors/${seniorId}/emergency-contacts`,
             );
             if (!response.ok)
@@ -536,7 +703,7 @@ const App: React.FC = () => {
 
     const fetchConversationReplies = async (alertId: string) => {
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `/api/v1/operator/alerts/${alertId}/conversation-replies`,
             );
             if (!response.ok)
@@ -547,6 +714,18 @@ const App: React.FC = () => {
             setCaseReplies(Array.isArray(data) ? data : []);
         } catch (error) {
             setCaseReplies([]);
+        }
+    };
+
+    const fetchCaseAiActions = async (alertId: string) => {
+        try {
+            const response = await apiFetch(`/api/v1/operator/alerts/${alertId}/ai-actions`);
+            if (!response.ok)
+                throw new Error(`Failed to fetch AI actions (${response.status})`);
+            const data = (await response.json()) as AiActionRecord[];
+            setCaseAiActions(Array.isArray(data) ? data : []);
+        } catch (error) {
+            setCaseAiActions([]);
         }
     };
 
@@ -580,11 +759,12 @@ const App: React.FC = () => {
         return () => window.clearTimeout(timerId);
     }, [toastMessage]);
 
+
     const updateAlertInDB = async (
         alertId: string,
         updates: AlertOverridePayload,
     ) => {
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/alerts/${alertId}/override?save_as_example=false`,
             {
                 method: "PATCH",
@@ -616,7 +796,7 @@ const App: React.FC = () => {
         const transcript = fewShotTranscript.trim();
         if (!transcript) return;
 
-        const response = await fetch("/api/v1/operator/few-shot-examples", {
+        const response = await apiFetch("/api/v1/operator/few-shot-examples", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ transcript, risk_level: fewShotRisk }),
@@ -631,7 +811,7 @@ const App: React.FC = () => {
     };
 
     const deleteFewShotExample = async (exampleId: string) => {
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/few-shot-examples/${exampleId}`,
             { method: "DELETE" },
         );
@@ -649,7 +829,7 @@ const App: React.FC = () => {
 
         setIsSavingPrompt(true);
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 "/api/v1/operator/settings/risk-prompt",
                 {
                     method: "PUT",
@@ -669,7 +849,7 @@ const App: React.FC = () => {
     };
 
     const updateFewShotExample = async (example: FewShotExample) => {
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/few-shot-examples/${example.id}`,
             {
                 method: "PATCH",
@@ -702,12 +882,14 @@ const App: React.FC = () => {
         const buildOperatorActions = (
             includeCloseCase: boolean,
         ): OperatorActionInput[] | null => {
-            const actions: OperatorActionInput[] = [
-                {
+            const actions: OperatorActionInput[] = [];
+
+            if (!selectedCase.is_attended) {
+                actions.push({
                     actions_taken: "mark_attended",
                     action_time: new Date().toISOString(),
-                },
-            ];
+                });
+            }
 
             if (dispatchAmbulanceNow) {
                 const dispatchLabel =
@@ -780,6 +962,7 @@ const App: React.FC = () => {
             setFamilyActionTime("");
             setSelectedFamilyContactIds([]);
             setSelectedCase(null);
+            setCaseAiActions([]);
             setToastMessage("Case has been updated.");
             if (isClosedAlert(updatedCase)) {
                 setActiveTab("closed");
@@ -795,12 +978,7 @@ const App: React.FC = () => {
         if (!selectedCase) return;
 
         const buildOperatorActions = (): OperatorActionInput[] | null => {
-            const actions: OperatorActionInput[] = [
-                {
-                    actions_taken: "mark_attended",
-                    action_time: new Date().toISOString(),
-                },
-            ];
+            const actions: OperatorActionInput[] = [];
 
             if (dispatchAmbulanceNow) {
                 const dispatchLabel =
@@ -866,6 +1044,7 @@ const App: React.FC = () => {
             setFamilyActionTime("");
             setSelectedFamilyContactIds([]);
             setSelectedCase(null);
+            setCaseAiActions([]);
             setActiveTab("closed");
             setToastMessage("Case has been updated.");
             void fetchAlerts().catch(() => undefined);
@@ -912,6 +1091,7 @@ const App: React.FC = () => {
         setSelectedFamilyContactIds([]);
         setSelectedCaseTab("details");
         fetchConversationReplies(alert.id);
+        fetchCaseAiActions(alert.id);
         if (alert.seniors?.id) {
             fetchContactsForSelectedCase(alert.seniors.id);
         } else {
@@ -946,7 +1126,7 @@ const App: React.FC = () => {
             alert("No transcript available for this case.");
             return;
         }
-        const response = await fetch("/api/v1/operator/few-shot-examples", {
+        const response = await apiFetch("/api/v1/operator/few-shot-examples", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ transcript, risk_level: riskLevel }),
@@ -987,7 +1167,7 @@ const App: React.FC = () => {
             return;
         }
 
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/seniors/${seniorId}/emergency-contacts`,
             {
                 method: "POST",
@@ -1038,7 +1218,7 @@ const App: React.FC = () => {
             return;
         }
 
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/emergency-contacts/${contact.id}`,
             {
                 method: "PATCH",
@@ -1058,7 +1238,7 @@ const App: React.FC = () => {
     };
 
     const deleteContact = async (seniorId: string, contactId: string) => {
-        const response = await fetch(
+        const response = await apiFetch(
             `/api/v1/operator/emergency-contacts/${contactId}`,
             {
                 method: "DELETE",
@@ -1121,6 +1301,7 @@ const App: React.FC = () => {
             (a, b) => getTimeValue(b.action_time) - getTimeValue(a.action_time),
         );
     }, [selectedCase]);
+    const selectedCaseRecommendation = selectedCase?.ai_recommendation || null;
 
     const CaseListItem = ({ alert }: { alert: Alert }) => {
         const isHandled =
@@ -1128,6 +1309,12 @@ const App: React.FC = () => {
             Boolean(alert.is_attended) &&
             Boolean(alert.ambulance_dispatched) &&
             Boolean(alert.family_called);
+        const recommendation = alert.ai_recommendation;
+        const topRecommendation = recommendation
+            ? (recommendation.recommended_labels?.[0] ||
+              recommendation.recommended_actions?.[0] ||
+              "")
+            : "";
 
         return (
             <div
@@ -1166,6 +1353,37 @@ const App: React.FC = () => {
                                 }}
                             >
                                 HANDLED
+                            </span>
+                        )}
+                        {resolveAudioUrl(alert.audio_url) && (
+                            <span
+                                className="severity-badge"
+                                style={{
+                                    fontSize: "0.58rem",
+                                    padding: "1px 6px",
+                                    background: "#0f766e",
+                                    color: "#ccfbf1",
+                                }}
+                            >
+                                Audio Received
+                            </span>
+                        )}
+                        {topRecommendation && (
+                            <span
+                                className="severity-badge"
+                                style={{
+                                    fontSize: "0.58rem",
+                                    padding: "1px 6px",
+                                    background: "#1d4ed8",
+                                    color: "#dbeafe",
+                                    maxWidth: "240px",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                }}
+                                title={`AI Recommendation: ${topRecommendation}`}
+                            >
+                                AI: {topRecommendation}
                             </span>
                         )}
                     </span>
@@ -1345,9 +1563,28 @@ const App: React.FC = () => {
                                     onClick={() => openCaseDetails(alert)}
                                 >
                                     <div className="case-item-header">
-                                        <span>
+                                        <span
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: "0.45rem",
+                                            }}
+                                        >
                                             {alert.seniors?.full_name ||
                                                 "Unknown Senior"}
+                                            {resolveAudioUrl(alert.audio_url) && (
+                                                <span
+                                                    className="severity-badge"
+                                                    style={{
+                                                        fontSize: "0.58rem",
+                                                        padding: "1px 6px",
+                                                        background: "#0f766e",
+                                                        color: "#ccfbf1",
+                                                    }}
+                                                >
+                                                    Audio Received
+                                                </span>
+                                            )}
                                         </span>
                                         <span
                                             style={{
@@ -2079,7 +2316,10 @@ const App: React.FC = () => {
                             </span>
                             <button
                                 className="close-btn"
-                                onClick={() => setSelectedCase(null)}
+                                onClick={() => {
+                                    setSelectedCase(null);
+                                    setCaseAiActions([]);
+                                }}
                             >
                                 x
                             </button>
@@ -2103,6 +2343,14 @@ const App: React.FC = () => {
                                     onClick={() => setSelectedCaseTab("family")}
                                 >
                                     Family Contacts ({caseContacts.length})
+                                </button>
+                                <button
+                                    className={`dashboard-tab-btn ${selectedCaseTab === "ai_actions" ? "active" : ""}`}
+                                    onClick={() =>
+                                        setSelectedCaseTab("ai_actions")
+                                    }
+                                >
+                                    AI Actions ({caseAiActions.length})
                                 </button>
                                 {isClosedAlert(selectedCase) && (
                                     <button
@@ -2130,13 +2378,78 @@ const App: React.FC = () => {
                                         <div className="container-box">
                                             <div
                                                 style={{
-                                                    fontSize: "0.75rem",
-                                                    fontWeight: 700,
-                                                    color: "var(--text-muted)",
+                                                    display: "flex",
+                                                    alignItems: "center",
+                                                    justifyContent:
+                                                        "space-between",
+                                                    gap: "0.75rem",
                                                     marginBottom: "0.5rem",
                                                 }}
                                             >
-                                                LOCATION & CONTACT
+                                                <div
+                                                    style={{
+                                                        fontSize: "0.75rem",
+                                                        fontWeight: 700,
+                                                        color: "var(--text-muted)",
+                                                    }}
+                                                >
+                                                    LOCATION & CONTEXT
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    className="pill-call-btn"
+                                                    onClick={() =>
+                                                        callFamilyContactViaLinphone(
+                                                            selectedCase.seniors
+                                                                ?.sip_url,
+                                                        )
+                                                    }
+                                                >
+                                                    Call
+                                                </button>
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: "0.9rem",
+                                                    marginBottom: "0.35rem",
+                                                }}
+                                            >
+                                                Name: {" "}
+                                                {selectedCase.seniors
+                                                    ?.full_name ||
+                                                    "Unknown Senior"}
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: "0.9rem",
+                                                    marginBottom: "0.35rem",
+                                                }}
+                                            >
+                                                Date of Birth: {" "}
+                                                {getSeniorBirthDateDisplay(
+                                                    selectedCase.seniors
+                                                        ?.birth_year,
+                                                    selectedCase.seniors
+                                                        ?.birth_month,
+                                                    selectedCase.seniors
+                                                        ?.birth_day,
+                                                )}
+                                            </div>
+                                            <div
+                                                style={{
+                                                    fontSize: "0.9rem",
+                                                    marginBottom: "0.35rem",
+                                                }}
+                                            >
+                                                Age: {" "}
+                                                {getSeniorAge(
+                                                    selectedCase.seniors
+                                                        ?.birth_year,
+                                                    selectedCase.seniors
+                                                        ?.birth_month,
+                                                    selectedCase.seniors
+                                                        ?.birth_day,
+                                                )}
                                             </div>
                                             <div style={{ fontWeight: 700 }}>
                                                 {selectedCase.seniors
@@ -2192,6 +2505,15 @@ const App: React.FC = () => {
                                                 ) || "No transcript"}
                                                 "
                                             </div>
+                                            <div
+                                                style={{
+                                                    fontSize: "0.78rem",
+                                                    color: "#fcd34d",
+                                                    marginBottom: "0.6rem",
+                                                }}
+                                            >
+                                                Disclaimer: transcription generated by AI and may contain inaccuracies.
+                                            </div>
                                             {isAlertTranslated(
                                                 selectedCase,
                                             ) && (
@@ -2228,23 +2550,6 @@ const App: React.FC = () => {
                                                         support the audio
                                                         element.
                                                     </audio>
-                                                    <a
-                                                        href={
-                                                            resolveAudioUrl(
-                                                                selectedCase.audio_url,
-                                                            ) || "#"
-                                                        }
-                                                        target="_blank"
-                                                        rel="noreferrer"
-                                                        style={{
-                                                            display:
-                                                                "inline-block",
-                                                            marginTop: "0.5rem",
-                                                            fontSize: "0.8rem",
-                                                        }}
-                                                    >
-                                                        Open audio URL
-                                                    </a>
                                                 </>
                                             )}
                                         </div>
@@ -2445,6 +2750,94 @@ const App: React.FC = () => {
                                                 )}
                                             </div>
                                         )}
+
+                                    {!isClosedAlert(selectedCase) && (
+                                        <div
+                                            className="container-box recommendation-box"
+                                            style={{ marginBottom: "1rem" }}
+                                        >
+                                            <div
+                                                style={{
+                                                    fontSize: "0.75rem",
+                                                    fontWeight: 700,
+                                                    color: "var(--text-muted)",
+                                                    marginBottom:
+                                                        selectedCaseRecommendation
+                                                            ? "0.75rem"
+                                                            : 0,
+                                                }}
+                                            >
+                                                AI ACTION RECOMMENDATION
+                                            </div>
+
+                                            {selectedCaseRecommendation && (
+                                                <>
+                                                    <div
+                                                        className="pill-wrap"
+                                                        style={{
+                                                            marginBottom:
+                                                                "0.55rem",
+                                                        }}
+                                                    >
+                                                        {(
+                                                            selectedCaseRecommendation.recommended_labels &&
+                                                            selectedCaseRecommendation.recommended_labels
+                                                                .length > 0
+                                                                ? selectedCaseRecommendation.recommended_labels
+                                                                : selectedCaseRecommendation.recommended_actions || []
+                                                        ).map((label) => (
+                                                            <span
+                                                                key={label}
+                                                                className="pill-chip active"
+                                                            >
+                                                                {label}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                    <div
+                                                        style={{
+                                                            fontSize: "0.92rem",
+                                                            marginBottom:
+                                                                "0.45rem",
+                                                            whiteSpace:
+                                                                "pre-wrap",
+                                                        }}
+                                                    >
+                                                        {
+                                                            selectedCaseRecommendation.rationale
+                                                        }
+                                                    </div>
+                                                    <div
+                                                        style={{
+                                                            fontSize: "0.82rem",
+                                                            color: "var(--text-muted)",
+                                                        }}
+                                                    >
+                                                        Generated from AI{" | "}
+                                                        Confidence: {" "}
+                                                        {Number.isFinite(
+                                                            selectedCaseRecommendation.confidence,
+                                                        )
+                                                            ? `${Math.round((selectedCaseRecommendation.confidence || 0) * 100)}%`
+                                                            : "-"}
+                                                        {selectedCaseRecommendation.created_at
+                                                            ? ` | Generated ${new Date(selectedCaseRecommendation.created_at).toLocaleString()}`
+                                                            : ""}
+                                                    </div>
+                                                </>
+                                            )}
+                                            {!selectedCaseRecommendation && (
+                                                <div
+                                                    style={{
+                                                        color: "var(--text-muted)",
+                                                        fontSize: "0.88rem",
+                                                    }}
+                                                >
+                                                    Recommendation not available yet for this case.
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {!isClosedAlert(selectedCase) && (
                                         <div
@@ -2850,6 +3243,57 @@ const App: React.FC = () => {
                                 </div>
                             )}
 
+                            {selectedCaseTab === "ai_actions" && (
+                                <div className="action-history-list">
+                                    {caseAiActions.length === 0 ? (
+                                        <div
+                                            className="container-box"
+                                            style={{
+                                                textAlign: "center",
+                                                color: "var(--text-muted)",
+                                            }}
+                                        >
+                                            No AI actions recorded for this case.
+                                        </div>
+                                    ) : (
+                                        caseAiActions.map((action) => {
+                                            const detailText =
+                                                getAiActionDetails(action);
+                                            return (
+                                                <div
+                                                    key={action.id}
+                                                    className="action-history-item"
+                                                >
+                                                    <div className="action-history-title">
+                                                        {getAiActionTitle(
+                                                            action.action_type,
+                                                        )}
+                                                    </div>
+                                                    <div className="action-history-meta">
+                                                        {action.created_at
+                                                            ? new Date(
+                                                                  action.created_at,
+                                                              ).toLocaleString()
+                                                            : "Time not recorded"}
+                                                        {action.action_status
+                                                            ? ` • ${action.action_status}`
+                                                            : ""}
+                                                        {action.provider
+                                                            ? ` • ${action.provider}`
+                                                            : ""}
+                                                    </div>
+                                                    {detailText && (
+                                                        <div className="action-history-payload">
+                                                            {detailText}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            )}
+
                             {selectedCaseTab === "family" && (
                                 <div
                                     className="contact-panel"
@@ -2908,7 +3352,9 @@ const App: React.FC = () => {
                                                         type="button"
                                                         className="pill-call-btn"
                                                         onClick={() =>
-                                                            callFamilyContactViaLinphone()
+                                                            callFamilyContactViaLinphone(
+                                                                contact.sip_url,
+                                                            )
                                                         }
                                                     >
                                                         Dial now

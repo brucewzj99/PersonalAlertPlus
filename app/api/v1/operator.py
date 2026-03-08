@@ -1,4 +1,5 @@
 import re
+import json
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
@@ -17,11 +18,45 @@ from app.models.schemas import (
     FewShotExampleUpdate,
 )
 from app.config import get_settings
+from app.brain.providers.openai_compatible import OpenAICompatibleClient
 from app.services.database import DatabaseService
 
 router = APIRouter(prefix="/api/v1/operator", tags=["operator"])
 db = DatabaseService()
 logger = logging.getLogger(__name__)
+
+ACTION_RECOMMENDATION_SYSTEM_PROMPT = """You are an AI assistant helping an emergency operator decide response actions.
+Choose only from the enabled available choices.
+
+Guidelines:
+- Prioritize senior safety and urgency.
+- Use current case details first, then historical alerts for context.
+- Keep rationale concise and actionable.
+- Do not invent choices that are not in available_choices.
+- Allowed action keys are: senior_activity_centre_staff, careline_staff, community_responder, police, scdf, call.
+
+Return strict JSON with this schema:
+{
+  "recommended_actions": ["choice_key_1", "choice_key_2"],
+  "rationale": "Short explanation for operator.",
+  "confidence": 0.0,
+  "context_alert_ids": ["historical_alert_id_1"]
+}
+
+Rules for confidence:
+- between 0.0 and 1.0
+- higher when evidence is explicit and consistent
+- lower when details are unclear or conflicting
+"""
+
+ALLOWED_RECOMMENDATION_ACTIONS = {
+    "senior_activity_centre_staff",
+    "careline_staff",
+    "community_responder",
+    "police",
+    "scdf",
+    "call",
+}
 
 OPERATOR_ACTION_MESSAGES: dict[str, dict[str, str]] = {
     "en": {
@@ -155,10 +190,155 @@ class PromptSettingUpdate(BaseModel):
     value: str
 
 
+class ActionChoice(BaseModel):
+    action_key: str
+    label: str
+    enabled: bool = True
+    metadata: dict[str, Any] | None = None
+
+
+class ActionRecommendationRequest(BaseModel):
+    available_choices: list[ActionChoice]
+
+
+class ActionRecommendationResponse(BaseModel):
+    recommended_actions: list[str]
+    recommended_labels: list[str]
+    rationale: str
+    confidence: float
+    context_alert_ids: list[str]
+    based_on_previous_alerts: int
+    fallback_used: bool
+
+
 def _ensure_dict_rows(data: Any) -> list[dict[str, Any]]:
     if not isinstance(data, list):
         return []
     return [row for row in data if isinstance(row, dict)]
+
+
+def _normalize_action_choice_key(value: str) -> str:
+    normalized = re.sub(r"[\s\-]+", "_", (value or "").strip().lower())
+    aliases = {
+        "dispatch_ambulance": "scdf",
+        "dispatchambulance": "scdf",
+        "ambulance": "scdf",
+        "call_family": "call",
+        "family": "call",
+        "family_called": "call",
+        "callfamily": "call",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _coerce_confidence(value: Any, default: float = 0.5) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(1.0, max(0.0, parsed))
+
+
+def _fallback_action_recommendation(
+    current_alert: dict[str, Any],
+    enabled_choices: list[dict[str, Any]],
+) -> dict[str, Any]:
+    risk_level = str(current_alert.get("risk_level") or "").upper()
+    enabled_keys = {
+        _normalize_action_choice_key(str(choice.get("action_key") or ""))
+        for choice in enabled_choices
+    }
+
+    recommended_actions: list[str] = []
+    if risk_level == "URGENT":
+        if "scdf" in enabled_keys:
+            recommended_actions.append("scdf")
+        if "police" in enabled_keys:
+            recommended_actions.append("police")
+        if "call" in enabled_keys:
+            recommended_actions.append("call")
+    elif risk_level in {"NON_URGENT", "UNCERTAIN"}:
+        if "careline_staff" in enabled_keys:
+            recommended_actions.append("careline_staff")
+        elif "senior_activity_centre_staff" in enabled_keys:
+            recommended_actions.append("senior_activity_centre_staff")
+        if "call" in enabled_keys:
+            recommended_actions.append("call")
+    else:
+        if "call" in enabled_keys:
+            recommended_actions.append("call")
+
+    recommended_actions = [
+        action for action in recommended_actions if action in ALLOWED_RECOMMENDATION_ACTIONS
+    ]
+
+    if not recommended_actions and enabled_choices:
+        first_choice = enabled_choices[0]
+        recommended_actions = [
+            _normalize_action_choice_key(str(first_choice.get("action_key") or ""))
+        ]
+
+    return {
+        "recommended_actions": [key for key in recommended_actions if key],
+        "rationale": (
+            "Fallback recommendation based on current risk level and enabled actions."
+        ),
+        "confidence": 0.6 if risk_level in {"URGENT", "NON_URGENT"} else 0.45,
+        "context_alert_ids": [],
+        "fallback_used": True,
+    }
+
+
+def _choice_labels_by_key(
+    choices: list[dict[str, Any]],
+) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for choice in choices:
+        key = _normalize_action_choice_key(str(choice.get("action_key") or ""))
+        if not key or key not in ALLOWED_RECOMMENDATION_ACTIONS:
+            continue
+        label = str(choice.get("label") or "").strip() or key.replace("_", " ").title()
+        mapping[key] = label
+    return mapping
+
+
+def _log_action_recommendation(
+    alert_id: str,
+    details: dict[str, Any],
+    provider: str,
+    action_status: str,
+) -> None:
+    try:
+        db.client.table("ai_actions").insert(
+            {
+                "alert_id": alert_id,
+                "action_type": "operator_action_recommendation",
+                "action_status": action_status,
+                "details": details,
+                "provider": provider,
+            }
+        ).execute()
+    except Exception as exc:
+        logger.warning("Failed to log action recommendation in ai_actions: %s", exc)
+
+    try:
+        db.client.table("operator_action_recommendations").insert(
+            {
+                "case_id": alert_id,
+                "model": provider,
+                "available_choices": details.get("available_choices") or [],
+                "recommended_actions": details.get("recommended_actions") or [],
+                "recommended_labels": details.get("recommended_labels") or [],
+                "rationale": details.get("rationale") or "",
+                "confidence": details.get("confidence"),
+                "context_alert_ids": details.get("context_alert_ids") or [],
+                "raw_response": details.get("raw_response") or {},
+            }
+        ).execute()
+    except Exception as exc:
+        if _is_missing_table_error(exc, "operator_action_recommendations"):
+            return
+        logger.warning("Failed to log recommendation in dedicated table: %s", exc)
 
 
 def _normalize_alert_update(update_payload: dict[str, Any]) -> dict[str, Any]:
@@ -393,6 +573,57 @@ def _attach_operator_action_state(alerts: list[dict[str, Any]]) -> list[dict[str
     return alerts
 
 
+def _attach_latest_ai_recommendation(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not alerts:
+        return alerts
+
+    for alert in alerts:
+        alert["ai_recommendation"] = None
+
+    alert_ids = [str(alert.get("id") or "") for alert in alerts if alert.get("id")]
+    if not alert_ids:
+        return alerts
+
+    try:
+        response = (
+            db.client.table("operator_action_recommendations")
+            .select(
+                "case_id, recommended_actions, recommended_labels, rationale, confidence, context_alert_ids, created_at"
+            )
+            .in_("case_id", alert_ids)
+            .order("created_at", desc=True)
+            .limit(500)
+            .execute()
+        )
+    except Exception as exc:
+        if _is_missing_table_error(exc, "operator_action_recommendations"):
+            return alerts
+        raise
+
+    rows = _ensure_dict_rows(response.data)
+    by_case: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        case_id = str(row.get("case_id") or "")
+        if not case_id or case_id in by_case:
+            continue
+        by_case[case_id] = row
+
+    for alert in alerts:
+        case_id = str(alert.get("id") or "")
+        if case_id in by_case:
+            recommendation = dict(by_case[case_id])
+            raw_actions = recommendation.get("recommended_actions") or []
+            filtered_actions = [
+                _normalize_action_choice_key(str(item))
+                for item in raw_actions
+                if _normalize_action_choice_key(str(item)) in ALLOWED_RECOMMENDATION_ACTIONS
+            ]
+            recommendation["recommended_actions"] = filtered_actions
+            alert["ai_recommendation"] = recommendation
+
+    return alerts
+
+
 def _extract_missing_column(exc: Exception, table_name: str) -> str | None:
     if not isinstance(exc, APIError):
         return None
@@ -474,7 +705,7 @@ async def get_alerts(
         response = (
             db.client.table("alerts")
             .select(
-                "*, seniors(id, full_name, phone_number, address, preferred_language)"
+                "*, seniors(id, full_name, phone_number, address, preferred_language, birth_year, birth_month, birth_day, sip_url)"
             )
             .order("created_at", desc=True)
             .range(offset, offset + limit - 1)
@@ -482,12 +713,24 @@ async def get_alerts(
         )
         alerts = _ensure_dict_rows(response.data)
     except Exception as exc:
-        if _is_missing_table_error(exc, "alerts"):
+        if _is_missing_column_error(exc, "seniors.birth_year") or _is_missing_column_error(exc, "seniors.sip_url"):
+            response = (
+                db.client.table("alerts")
+                .select(
+                    "*, seniors(id, full_name, phone_number, address, preferred_language, sip_url)"
+                )
+                .order("created_at", desc=True)
+                .range(offset, offset + limit - 1)
+                .execute()
+            )
+            alerts = _ensure_dict_rows(response.data)
+        elif _is_missing_table_error(exc, "alerts"):
             alerts = []
         else:
             raise
 
     alerts = _attach_operator_action_state(alerts)
+    alerts = _attach_latest_ai_recommendation(alerts)
 
     if not include_closed:
         alerts = [
@@ -577,6 +820,7 @@ async def override_alert(
 
     updated_row = updated_rows[0]
     updated_row = _attach_operator_action_state([updated_row])[0]
+    updated_row = _attach_latest_ai_recommendation([updated_row])[0]
 
     action_names = {
         _normalize_action_name(event.get("actions_taken")) for event in action_events
@@ -633,6 +877,279 @@ async def get_conversation_replies(alert_id: str) -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+@router.get("/alerts/{alert_id}/ai-actions")
+async def get_ai_actions(alert_id: str) -> list[dict[str, Any]]:
+    response = (
+        db.client.table("ai_actions")
+        .select(
+            "id, action_type, action_status, details, provider, attempt_count, external_ref, error_message, created_at"
+        )
+        .eq("alert_id", alert_id)
+        .order("created_at", desc=True)
+        .limit(100)
+        .execute()
+    )
+    return _ensure_dict_rows(response.data)
+
+
+@router.post(
+    "/alerts/{alert_id}/recommend-actions",
+    response_model=ActionRecommendationResponse,
+)
+async def recommend_actions_for_case(
+    alert_id: str,
+    payload: ActionRecommendationRequest,
+) -> ActionRecommendationResponse:
+    try:
+        existing_response = (
+            db.client.table("operator_action_recommendations")
+            .select(
+                "recommended_actions, recommended_labels, rationale, confidence, context_alert_ids, created_at"
+            )
+            .eq("case_id", alert_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        existing_rows = _ensure_dict_rows(existing_response.data)
+        if existing_rows:
+            existing = existing_rows[0]
+            existing_actions = [
+                _normalize_action_choice_key(str(item))
+                for item in (existing.get("recommended_actions") or [])
+                if _normalize_action_choice_key(str(item))
+                in ALLOWED_RECOMMENDATION_ACTIONS
+            ]
+            existing_labels = [
+                str(item)
+                for item in (existing.get("recommended_labels") or [])
+                if str(item)
+            ]
+            if len(existing_labels) != len(existing_actions):
+                default_label_map = {
+                    "senior_activity_centre_staff": "Senior Activity Centre Staff",
+                    "careline_staff": "CareLine Staff",
+                    "community_responder": "Community Responder",
+                    "police": "Police",
+                    "scdf": "SCDF",
+                    "call": "Call",
+                }
+                existing_labels = [
+                    default_label_map.get(action, action.replace("_", " ").title())
+                    for action in existing_actions
+                ]
+            context_alert_ids = [
+                str(item)
+                for item in (existing.get("context_alert_ids") or [])
+                if str(item)
+            ]
+            return ActionRecommendationResponse(
+                recommended_actions=existing_actions,
+                recommended_labels=existing_labels,
+                rationale=str(existing.get("rationale") or ""),
+                confidence=_coerce_confidence(existing.get("confidence")),
+                context_alert_ids=context_alert_ids,
+                based_on_previous_alerts=len(context_alert_ids),
+                fallback_used=False,
+            )
+    except Exception as exc:
+        if not _is_missing_table_error(exc, "operator_action_recommendations"):
+            raise
+
+    current_response = (
+        db.client.table("alerts")
+        .select(
+            "id, senior_id, risk_level, risk_score, status, ai_assessment, analysis_summary, "
+            "transcription, translated_text, language_detected, keywords, created_at, "
+            "seniors(id, full_name, preferred_language, medical_notes, address, sip_url)"
+        )
+        .eq("id", alert_id)
+        .limit(1)
+        .execute()
+    )
+    current_rows = _ensure_dict_rows(current_response.data)
+    if not current_rows:
+        raise HTTPException(status_code=404, detail="Alert not found")
+
+    current_alert = current_rows[0]
+    senior_id = current_alert.get("senior_id")
+    if not isinstance(senior_id, str) or not senior_id:
+        raise HTTPException(status_code=400, detail="Alert missing senior_id")
+
+    choice_rows = [choice.model_dump() for choice in payload.available_choices]
+    enabled_choices = [
+        choice
+        for choice in choice_rows
+        if choice.get("enabled") is True
+        and _normalize_action_choice_key(str(choice.get("action_key") or ""))
+        in ALLOWED_RECOMMENDATION_ACTIONS
+    ]
+    if not enabled_choices:
+        raise HTTPException(status_code=400, detail="No enabled choices provided")
+
+    history_response = (
+        db.client.table("alerts")
+        .select(
+            "id, created_at, risk_level, risk_score, status, ai_assessment, "
+            "analysis_summary, transcription, translated_text, keywords"
+        )
+        .eq("senior_id", senior_id)
+        .neq("id", alert_id)
+        .order("created_at", desc=True)
+        .limit(8)
+        .execute()
+    )
+    history_rows = _ensure_dict_rows(history_response.data)
+    history_ids = [str(row.get("id")) for row in history_rows if row.get("id")]
+
+    action_rows: list[dict[str, Any]] = []
+    if history_ids:
+        try:
+            actions_response = (
+                db.client.table("operator_actions")
+                .select("case_id, actions_taken, action_time")
+                .in_("case_id", history_ids)
+                .order("action_time", desc=True)
+                .limit(100)
+                .execute()
+            )
+            action_rows = _ensure_dict_rows(actions_response.data)
+        except Exception as exc:
+            if not _is_missing_table_error(exc, "operator_actions"):
+                raise
+
+    actions_by_case: dict[str, list[str]] = {}
+    for row in action_rows:
+        case_id = str(row.get("case_id") or "")
+        if not case_id:
+            continue
+        action_name = _normalize_action_name(row.get("actions_taken"))
+        if not action_name:
+            continue
+        actions_by_case.setdefault(case_id, []).append(action_name)
+
+    compact_history: list[dict[str, Any]] = []
+    for row in history_rows:
+        case_id = str(row.get("id") or "")
+        compact_history.append(
+            {
+                "id": case_id,
+                "created_at": row.get("created_at"),
+                "risk_level": row.get("risk_level"),
+                "risk_score": row.get("risk_score"),
+                "status": row.get("status"),
+                "transcription": row.get("transcription"),
+                "translated_text": row.get("translated_text"),
+                "ai_assessment": row.get("ai_assessment") or row.get("analysis_summary"),
+                "keywords": row.get("keywords"),
+                "operator_actions": actions_by_case.get(case_id, [])[:5],
+            }
+        )
+
+    provider = get_settings().ai_chat_model
+    fallback = _fallback_action_recommendation(current_alert, enabled_choices)
+    final_payload = dict(fallback)
+    raw_response: dict[str, Any] = {}
+
+    choice_labels = _choice_labels_by_key(choice_rows)
+    enabled_keys = {
+        _normalize_action_choice_key(str(choice.get("action_key") or ""))
+        for choice in enabled_choices
+    }
+
+    try:
+        ai_client = OpenAICompatibleClient()
+        user_payload = {
+            "current_alert": {
+                "id": current_alert.get("id"),
+                "risk_level": current_alert.get("risk_level"),
+                "risk_score": current_alert.get("risk_score"),
+                "status": current_alert.get("status"),
+                "transcription": current_alert.get("transcription"),
+                "translated_text": current_alert.get("translated_text"),
+                "language_detected": current_alert.get("language_detected"),
+                "keywords": current_alert.get("keywords"),
+                "ai_assessment": current_alert.get("ai_assessment")
+                or current_alert.get("analysis_summary"),
+                "senior": current_alert.get("seniors"),
+            },
+            "available_choices": enabled_choices,
+            "historical_alerts": compact_history,
+        }
+        ai_response = await ai_client._chatCompletion(
+            system_message=ACTION_RECOMMENDATION_SYSTEM_PROMPT,
+            user_message=json.dumps(user_payload),
+            response_format="json_object",
+        )
+        parsed = json.loads(ai_response)
+        parsed_dict = parsed if isinstance(parsed, dict) else {}
+        raw_response = parsed_dict
+
+        recommended_actions_raw = parsed_dict.get("recommended_actions")
+        recommended_actions: list[str] = []
+        if isinstance(recommended_actions_raw, list):
+            for item in recommended_actions_raw:
+                key = _normalize_action_choice_key(str(item or ""))
+                if key and key in enabled_keys and key not in recommended_actions:
+                    recommended_actions.append(key)
+
+        if recommended_actions:
+            final_payload = {
+                "recommended_actions": recommended_actions,
+                "rationale": str(parsed_dict.get("rationale") or "").strip()
+                or fallback["rationale"],
+                "confidence": _coerce_confidence(
+                    parsed_dict.get("confidence"),
+                    default=fallback["confidence"],
+                ),
+                "context_alert_ids": [
+                    str(ref)
+                    for ref in parsed_dict.get("context_alert_ids", [])
+                    if str(ref) in set(history_ids)
+                ],
+                "fallback_used": False,
+            }
+    except Exception as exc:
+        logger.warning("AI action recommendation failed: %s", exc)
+
+    recommended_labels: list[str] = []
+    for action_key_any in final_payload["recommended_actions"]:
+        action_key = str(action_key_any)
+        label = choice_labels.get(action_key)
+        if isinstance(label, str) and label.strip():
+            recommended_labels.append(label)
+        else:
+            recommended_labels.append(action_key.replace("_", " ").title())
+
+    log_details = {
+        "available_choices": choice_rows,
+        "recommended_actions": final_payload["recommended_actions"],
+        "recommended_labels": recommended_labels,
+        "rationale": final_payload["rationale"],
+        "confidence": final_payload["confidence"],
+        "context_alert_ids": final_payload["context_alert_ids"],
+        "historical_alert_count": len(compact_history),
+        "fallback_used": final_payload["fallback_used"],
+        "raw_response": raw_response,
+    }
+    _log_action_recommendation(
+        alert_id=alert_id,
+        details=log_details,
+        provider=provider,
+        action_status="fallback" if final_payload["fallback_used"] else "success",
+    )
+
+    return ActionRecommendationResponse(
+        recommended_actions=final_payload["recommended_actions"],
+        recommended_labels=recommended_labels,
+        rationale=str(final_payload["rationale"]),
+        confidence=_coerce_confidence(final_payload["confidence"]),
+        context_alert_ids=list(final_payload["context_alert_ids"]),
+        based_on_previous_alerts=len(compact_history),
+        fallback_used=bool(final_payload["fallback_used"]),
+    )
 
 
 @router.get("/few-shot-examples")

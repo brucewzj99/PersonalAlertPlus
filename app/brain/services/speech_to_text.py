@@ -41,6 +41,56 @@ def _looks_like_english_text(text: str) -> bool:
     return ascii_ratio >= 0.9 and alpha_count >= 3
 
 
+ENGLISH_HINT_WORDS = {
+    "the",
+    "and",
+    "is",
+    "are",
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "a",
+    "an",
+    "to",
+    "for",
+    "in",
+    "on",
+    "my",
+    "me",
+    "help",
+    "please",
+    "pain",
+    "fall",
+    "cannot",
+    "can't",
+}
+
+
+def _looks_like_meaningful_english(text: str) -> bool:
+    sample = (text or "").strip().lower()
+    if not sample:
+        return False
+    if not _looks_like_english_text(sample):
+        return False
+
+    tokens = [token for token in sample.replace("/", " ").split() if token]
+    if not tokens:
+        return False
+
+    token_matches = 0
+    for token in tokens[:30]:
+        cleaned = "".join(ch for ch in token if ch.isalpha() or ch == "'")
+        if cleaned in ENGLISH_HINT_WORDS:
+            token_matches += 1
+
+    if len(tokens) <= 6:
+        return token_matches >= 1
+    return token_matches >= 2
+
+
 def _normalize_language_code(value: str | None) -> str | None:
     if not value:
         return None
@@ -92,6 +142,7 @@ async def process_audio(
        or LLM fallback; return transcript + translated_text.
     """
     # Step 1: Transcribe (and get language from response)
+    preferred_lang = _normalize_language_code(preferred_language_hint)
     transcript, language_detected = await ai_client.transcribe_audio(audio_bytes)
 
     if not transcript and not language_detected:
@@ -105,10 +156,41 @@ async def process_audio(
     lang = _normalize_language_code(language_detected)
     if not lang and _looks_like_english_text(transcript):
         lang = "en"
-    if not lang and preferred_language_hint:
-        lang = _normalize_language_code(preferred_language_hint)
+    if not lang and preferred_lang:
+        lang = preferred_lang
     if lang != "en" and _looks_like_english_text(transcript):
         lang = "en"
+
+    should_retry_with_preferred = (
+        preferred_lang is not None
+        and preferred_lang != "en"
+        and lang == "en"
+        and not _looks_like_meaningful_english(transcript)
+    )
+
+    if should_retry_with_preferred:
+        try:
+            retry_transcript, retry_language = await ai_client.transcribe_audio(
+                audio_bytes,
+                language_hint=preferred_lang,
+            )
+            if retry_transcript and retry_transcript.strip():
+                transcript = retry_transcript
+            retry_lang = _normalize_language_code(retry_language)
+            if retry_lang:
+                lang = retry_lang
+            else:
+                lang = preferred_lang
+            language_detected = retry_language or preferred_lang
+            logger.info(
+                "Re-ran transcription with preferred language hint: %s",
+                preferred_lang,
+            )
+        except Exception as e:
+            logger.warning(
+                "Retry transcription with preferred language hint failed: %s",
+                e,
+            )
 
     # Step 2: If English, no translation
     if lang == "en":

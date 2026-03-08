@@ -362,6 +362,18 @@ header {
   gap: 0.5rem;
 }
 
+.btn-emergency:disabled,
+.btn-family:disabled,
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.recommendation-box {
+  border-color: #1e40af;
+  background: #0d1a30;
+}
+
 .container-box {
   background: #111a2d;
   padding: 1rem;

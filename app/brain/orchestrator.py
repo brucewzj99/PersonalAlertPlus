@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
+import re
 from typing import Any, cast
 
 from postgrest.exceptions import APIError
@@ -29,6 +31,54 @@ from app.services.storage import StorageService
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+OPERATOR_RECOMMENDATION_SYSTEM_PROMPT = """You are an AI assistant helping an emergency operator decide response actions.
+Choose only from the enabled available choices.
+
+Guidelines:
+- Prioritize senior safety and urgency.
+- Use current case details first, then historical alerts for context.
+- Keep rationale concise and actionable.
+- Do not invent choices that are not in available_choices.
+- Allowed action keys are: senior_activity_centre_staff, careline_staff, community_responder, police, scdf, call.
+
+Return strict JSON with this schema:
+{
+  "recommended_actions": ["choice_key_1", "choice_key_2"],
+  "rationale": "Short explanation for operator.",
+  "confidence": 0.0,
+  "context_alert_ids": ["historical_alert_id_1"]
+}
+"""
+
+ALLOWED_RECOMMENDATION_ACTIONS = {
+    "senior_activity_centre_staff",
+    "careline_staff",
+    "community_responder",
+    "police",
+    "scdf",
+    "call",
+}
+
+
+def _normalize_reco_action_key(value: str) -> str:
+    normalized = re.sub(r"[\s\-]+", "_", (value or "").strip().lower())
+    aliases = {
+        "dispatch_ambulance": "scdf",
+        "ambulance": "scdf",
+        "family": "call",
+        "family_called": "call",
+        "call_family": "call",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _coerce_confidence(value: Any, default: float = 0.5) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(1.0, max(0.0, parsed))
 
 # Map to DB constraint: Supabase alerts_risk_level_check allows URGENT, NON_URGENT, UNCERTAIN, FALSE_ALARM (uppercase)
 def _risk_level_for_db(raw: str) -> str:
@@ -297,6 +347,7 @@ class BrainOrchestrator:
                     alert_id=alert_id,
                     success=True,
                     language=language_detected,
+                    transcript_preview=(content or "")[:220],
                 )
             except Exception as e:
                 logger.error(f"Transcription failed: {e}")
@@ -304,6 +355,7 @@ class BrainOrchestrator:
                 self._action_logger.log_transcription(
                     alert_id=alert_id,
                     success=False,
+                    transcript_preview=(content or "")[:220] if content else None,
                     error=str(e),
                 )
                 if payload.text:
@@ -442,6 +494,18 @@ class BrainOrchestrator:
                 transcript=content,
                 audio_url=audio_url,
             )
+
+        try:
+            await self._create_operator_action_recommendation(
+                alert_id=alert_id,
+                senior=senior,
+                analysis=analysis,
+                transcript=content,
+                translated_text=translated_text,
+                language_detected=language_detected,
+            )
+        except Exception as e:
+            logger.warning("Failed to create operator recommendation: %s", e)
 
         print(f"[BrainOrchestrator] Step 10: Sending confirmation to senior...")
         send_check_in = analysis.risk_level == "UNCERTAIN"
@@ -852,15 +916,261 @@ class BrainOrchestrator:
             details={
                 "priority": "urgent" if risk_level == "URGENT" else "non-urgent",
                 "risk_level": risk_level,
+                "description": (
+                    "Alert escalated to operator queue."
+                    if action_type == "escalate_to_operator"
+                    else "Family notification workflow completed."
+                ),
             },
         )
 
         for result in results:
             self._action_logger.log_notification_sent(
                 alert_id=alert_id,
-                contact_name=result.get("recipient", "unknown"),
+                contact_name=str(
+                    result.get("contact_name")
+                    or result.get("recipient")
+                    or "unknown"
+                ),
                 channel=result.get("channel", "unknown"),
                 success=result.get("success", False),
                 external_ref=result.get("external_ref"),
                 error=result.get("error"),
             )
+
+    async def _create_operator_action_recommendation(
+        self,
+        alert_id: str,
+        senior: SeniorContext,
+        analysis: RiskAnalysis,
+        transcript: str | None,
+        translated_text: str | None,
+        language_detected: str | None,
+    ) -> None:
+        try:
+            existing = (
+                self._db.client.table("operator_action_recommendations")
+                .select("id")
+                .eq("case_id", alert_id)
+                .limit(1)
+                .execute()
+            )
+            existing_rows = existing.data if isinstance(existing.data, list) else []
+            if existing_rows:
+                return
+        except Exception as exc:
+            message = str(exc)
+            if "operator_action_recommendations" in message and "does not exist" in message:
+                return
+
+        contacts = self._get_emergency_contacts(senior.id)
+        available_choices = [
+            {
+                "action_key": "senior_activity_centre_staff",
+                "label": "Senior Activity Centre Staff",
+                "enabled": True,
+            },
+            {
+                "action_key": "careline_staff",
+                "label": "CareLine Staff",
+                "enabled": True,
+            },
+            {
+                "action_key": "community_responder",
+                "label": "Community Responder",
+                "enabled": True,
+            },
+            {
+                "action_key": "police",
+                "label": "Police",
+                "enabled": True,
+            },
+            {
+                "action_key": "scdf",
+                "label": "SCDF",
+                "enabled": True,
+            },
+            {
+                "action_key": "call",
+                "label": "Call",
+                "enabled": True,
+                "metadata": {
+                    "available_contact_ids": [c.id for c in contacts],
+                    "available_contact_names": [c.name for c in contacts],
+                },
+            },
+        ]
+
+        history_response = (
+            self._db.client.table("alerts")
+            .select(
+                "id, created_at, risk_level, risk_score, status, ai_assessment, analysis_summary, transcription, translated_text, keywords"
+            )
+            .eq("senior_id", senior.id)
+            .neq("id", alert_id)
+            .order("created_at", desc=True)
+            .limit(8)
+            .execute()
+        )
+        history_rows = history_response.data if isinstance(history_response.data, list) else []
+        history_rows = [row for row in history_rows if isinstance(row, dict)]
+        history_ids = [str(row.get("id")) for row in history_rows if row.get("id")]
+
+        fallback_actions: list[str] = []
+        if analysis.risk_level == "URGENT":
+            fallback_actions = ["scdf", "police", "call"]
+        elif analysis.risk_level in {"NON_URGENT", "UNCERTAIN"}:
+            fallback_actions = ["careline_staff", "senior_activity_centre_staff", "call"]
+        else:
+            fallback_actions = ["call"]
+
+        enabled_keys = {
+            _normalize_reco_action_key(str(choice.get("action_key") or ""))
+            for choice in available_choices
+            if choice.get("enabled") is True
+        }
+        fallback_actions = [a for a in fallback_actions if a in enabled_keys]
+        if not fallback_actions and enabled_keys:
+            fallback_actions = [next(iter(enabled_keys))]
+
+        final_actions = list(fallback_actions)
+        final_rationale = "Fallback recommendation generated from current risk level."
+        final_confidence = 0.6 if analysis.risk_level in {"URGENT", "NON_URGENT"} else 0.45
+        final_context_ids: list[str] = []
+        fallback_used = True
+        raw_response: dict[str, Any] = {}
+
+        try:
+            compact_history = [
+                {
+                    "id": str(row.get("id") or ""),
+                    "created_at": row.get("created_at"),
+                    "risk_level": row.get("risk_level"),
+                    "risk_score": row.get("risk_score"),
+                    "status": row.get("status"),
+                    "transcription": row.get("transcription"),
+                    "translated_text": row.get("translated_text"),
+                    "ai_assessment": row.get("ai_assessment") or row.get("analysis_summary"),
+                    "keywords": row.get("keywords"),
+                }
+                for row in history_rows
+            ]
+
+            ai_input = {
+                "current_alert": {
+                    "id": alert_id,
+                    "risk_level": analysis.risk_level,
+                    "risk_score": analysis.risk_score,
+                    "transcription": transcript,
+                    "translated_text": translated_text,
+                    "language_detected": language_detected,
+                    "keywords": analysis.keywords,
+                    "ai_assessment": analysis.reasoning,
+                    "senior": {
+                        "id": senior.id,
+                        "full_name": senior.full_name,
+                        "preferred_language": senior.preferred_language,
+                        "medical_notes": senior.medical_notes,
+                        "address": senior.address,
+                    },
+                },
+                "available_choices": [choice for choice in available_choices if choice.get("enabled")],
+                "historical_alerts": compact_history,
+            }
+
+            ai_response = await self._ai_client._chatCompletion(
+                system_message=OPERATOR_RECOMMENDATION_SYSTEM_PROMPT,
+                user_message=json.dumps(ai_input),
+                response_format="json_object",
+            )
+            parsed = json.loads(ai_response)
+            parsed_dict = parsed if isinstance(parsed, dict) else {}
+            raw_response = parsed_dict
+
+            candidate_actions: list[str] = []
+            recommended_actions_raw = parsed_dict.get("recommended_actions")
+            recommended_actions_list = (
+                recommended_actions_raw if isinstance(recommended_actions_raw, list) else []
+            )
+            for item in recommended_actions_list:
+                key = _normalize_reco_action_key(str(item or ""))
+                if (
+                    key
+                    and key in enabled_keys
+                    and key in ALLOWED_RECOMMENDATION_ACTIONS
+                    and key not in candidate_actions
+                ):
+                    candidate_actions.append(key)
+
+            if candidate_actions:
+                final_actions = candidate_actions
+                final_rationale = (
+                    str(parsed_dict.get("rationale") or "").strip() or final_rationale
+                )
+                final_confidence = _coerce_confidence(
+                    parsed_dict.get("confidence"),
+                    default=final_confidence,
+                )
+                raw_context = parsed_dict.get("context_alert_ids")
+                if isinstance(raw_context, list):
+                    final_context_ids = [
+                        str(case_id)
+                        for case_id in raw_context
+                        if str(case_id) in set(history_ids)
+                    ]
+                fallback_used = False
+        except Exception as exc:
+            logger.warning("AI recommendation generation failed, using fallback: %s", exc)
+
+        label_map = {
+            "senior_activity_centre_staff": "Senior Activity Centre Staff",
+            "careline_staff": "CareLine Staff",
+            "community_responder": "Community Responder",
+            "police": "Police",
+            "scdf": "SCDF",
+            "call": "Call",
+        }
+        recommended_labels = [label_map.get(action, action.replace("_", " ").title()) for action in final_actions]
+
+        details = {
+            "available_choices": available_choices,
+            "recommended_actions": final_actions,
+            "recommended_labels": recommended_labels,
+            "rationale": final_rationale,
+            "confidence": final_confidence,
+            "context_alert_ids": final_context_ids,
+            "historical_alert_count": len(history_rows),
+            "fallback_used": fallback_used,
+            "description": (
+                "AI generated operator recommended actions based on current alert context and previous alerts."
+            ),
+            "raw_response": raw_response,
+        }
+
+        self._action_logger.log_action(
+            alert_id=alert_id,
+            action_type="operator_action_recommendation",
+            action_status="fallback" if fallback_used else "success",
+            details=details,
+            provider=get_settings().ai_chat_model,
+        )
+
+        try:
+            self._db.client.table("operator_action_recommendations").insert(
+                {
+                    "case_id": alert_id,
+                    "model": get_settings().ai_chat_model,
+                    "available_choices": available_choices,
+                    "recommended_actions": final_actions,
+                    "recommended_labels": recommended_labels,
+                    "rationale": final_rationale,
+                    "confidence": final_confidence,
+                    "context_alert_ids": final_context_ids,
+                    "raw_response": raw_response,
+                }
+            ).execute()
+        except Exception as exc:
+            message = str(exc)
+            if "operator_action_recommendations" in message and "does not exist" in message:
+                return
+            raise

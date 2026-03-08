@@ -1,12 +1,12 @@
 {
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://05dc-129-126-61-115.ngrok-free.app/api/:path*"
-    },
-    {
-      "source": "/slides",
-      "destination": "/slides/personal-alert-plus-v2.html"
-    }
-  ]
+    "rewrites": [
+        {
+            "source": "/api/:path*",
+            "destination": "https://57f9-129-126-61-115.ngrok-free.app/api/:path*"
+        },
+        {
+            "source": "/slides",
+            "destination": "/slides/personal-alert-plus-v2.html"
+        }
+    ]
 }

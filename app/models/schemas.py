@@ -34,6 +34,7 @@ class Senior(BaseModel):
     id: str
     full_name: str
     phone_number: str
+    sip_url: str | None = None
     telegram_user_id: str | None = None
     address: str
     birth_year: int | None = None
@@ -78,6 +79,7 @@ class EmergencyContactInsert(BaseModel):
     name: str
     relationship: str | None = None
     phone_number: str | None = None
+    sip_url: str | None = None
     telegram_user_id: str | None = None
     priority_order: int = 1
     notify_on_uncertain: bool = False
@@ -92,6 +94,7 @@ class EmergencyContactUpdate(BaseModel):
     name: str | None = None
     relationship: str | None = None
     phone_number: str | None = None
+    sip_url: str | None = None
     telegram_user_id: str | None = None
     priority_order: int | None = None
     notify_on_uncertain: bool | None = None

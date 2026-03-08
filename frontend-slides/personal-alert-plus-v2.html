@@ -473,6 +473,12 @@
             gap: clamp(0.16rem, 0.45vw, 0.34rem);
         }
 
+        .solution-focus {
+            border: 2px solid rgba(194, 65, 12, 0.85);
+            background: rgba(255, 255, 255, 0.22);
+            box-shadow: 0 16px 30px rgba(194, 65, 12, 0.28);
+        }
+
         .solution-card.light {
             background: rgba(255, 255, 255, 0.92);
             color: var(--text-dark);
@@ -548,7 +554,8 @@
         #slide7 .slide-content,
         #slide8 .slide-content,
         #slide9 .slide-content,
-        #slide10 .slide-content {
+        #slide10 .slide-content,
+        #slide11 .slide-content {
             align-items: center;
             text-align: center;
         }
@@ -1301,7 +1308,7 @@
             <p class="subline reveal d2">It adds accessible trigger channels for seniors and provides operators with confidence-scored assessment support, while preserving full human override.</p>
             <div class="solution-visual reveal d3">
                 <div class="solution-input-stack">
-                    <article class="solution-card soft">
+                    <article class="solution-card soft solution-focus">
                         <div class="solution-icon">📱💬</div>
                         <div class="solution-label">Digital channels</div>
                         <p class="solution-note">Telegram text and voice trigger path</p>
@@ -1314,7 +1321,7 @@
                     </article>
                 </div>
                 <div class="solution-arrow">→</div>
-                <article class="solution-card light">
+                <article class="solution-card light solution-focus">
                     <div class="solution-icon">🤖</div>
                     <div class="solution-label">AI assessment layer</div>
                     <p class="solution-note">Transcription, language detection, risk classification</p>
@@ -1467,28 +1474,28 @@
         <div class="slide-content">
             <div class="deck-tag reveal">Live demo guide</div>
             <h2 class="reveal d1">Our demonstration roadmap</h2>
-            <p class="subline reveal d2">We will trace the journey from the senior's triggering incident to the operator's response dashboard step-by-step.</p>
+            <p class="subline reveal d2">We will first demo an uncertain case, then an urgent dialect case, followed by operator review and audit trail.</p>
 
             <div class="flow-strip reveal d3">
                 <article class="flow-card">
                     <div class="flow-no">01</div>
                     <div class="mini-kicker">Uncertain Case</div>
-                    <p style="font-size: var(--small-size);">Senior sends uncertain alert. Bot sends text & audio prompt. No response in 30s triggers automated fallback safety net.</p>
+                    <p style="font-size: var(--small-size);">Senior sends an uncertain alert. AI starts follow-up prompts to collect more context before escalation.</p>
                 </article>
                 <article class="flow-card">
                     <div class="flow-no">02</div>
-                    <div class="mini-kicker">Urgent Case</div>
-                    <p style="font-size: var(--small-size);">Cantonese input classified automatically as urgent. Family is notified instantly and operations escalation is triggered.</p>
+                    <div class="mini-kicker">Urgent Dialect Case</div>
+                    <p style="font-size: var(--small-size);">A dialect voice alert is translated and analyzed for distress signals. It is marked urgent based on risk context, then urgent actions are triggered.</p>
                 </article>
                 <article class="flow-card">
                     <div class="flow-no">03</div>
-                    <div class="mini-kicker">Operator Triage</div>
-                    <p style="font-size: var(--small-size);">Dashboard shows AI evaluation and confidence score. Operator reviews translated details and uses click-to-call SIP integration.</p>
+                    <div class="mini-kicker">Operator Dashboard</div>
+                    <p style="font-size: var(--small-size);">Operator reviews AI outputs, key signals, and case context, then confirms the final response action.</p>
                 </article>
                 <article class="flow-card">
                     <div class="flow-no">04</div>
-                    <div class="mini-kicker">Action & Audit</div>
-                    <p style="font-size: var(--small-size);">Operator dispatches service, logs status, and closes case. All actions appear in timestamped audit logs for transparency.</p>
+                    <div class="mini-kicker">Audit Trail</div>
+                    <p style="font-size: var(--small-size);">Every AI and operator action is captured with timestamps for full traceability and governance.</p>
                 </article>
             </div>
         </div>
@@ -1515,17 +1522,30 @@
                     <p>AI actions and operator actions are fully logged with timestamps.</p>
                 </article>
                 <article class="trust-card">
-                    <h3>Data protection</h3>
-                    <p>Operator access controls, protected backend, and no public database exposure.</p>
+                    <h3>Risk-based prioritisation</h3>
+                    <p>Urgent cases are surfaced first so operators can focus on high-impact response.</p>
                 </article>
             </div>
         </div>
     </section>
 
     <!-- ===========================================
-         SLIDE 9: IMPACT
+         SLIDE 9: LIVE DEMO TRANSITION
          =========================================== -->
     <section class="slide theme-dark" id="slide9">
+        <div class="slide-content">
+            <div class="deck-tag reveal">Transition</div>
+            <div class="reveal d2" style="margin-top: var(--content-gap); width: 100%; max-width: min(92vw, 980px); border-radius: var(--radius-lg); border: 2px solid rgba(194, 65, 12, 0.7); background: rgba(0, 0, 0, 0.32); padding: clamp(1.2rem, 3vw, 2.4rem); box-shadow: 0 20px 45px rgba(0, 0, 0, 0.35); display: grid; place-items: center; gap: 0.8rem;">
+                <div style="font-size: clamp(3.2rem, 8vw, 5.4rem); line-height: 1; filter: drop-shadow(0 0 14px rgba(194, 65, 12, 0.45));">🖥️</div>
+                <div style="font-size: clamp(1.6rem, 4.2vw, 2.6rem); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;">Live Demonstration</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===========================================
+         SLIDE 10: IMPACT
+         =========================================== -->
+    <section class="slide theme-dark" id="slide10">
         <div class="slide-content">
             <div class="deck-tag reveal">Impact</div>
             <h2 class="reveal d1">Delivering value across the care ecosystem</h2>
@@ -1535,26 +1555,24 @@
                 <article class="impact-card">
                     <h3 style="color: #fbbf9a;">For seniors</h3>
                     <ul class="stack-list" style="margin-top: 0.5rem;">
-                        <li>Inclusive, low-friction access.</li>
-                        <li>Multimodal audio and text pathways.</li>
-                        <li>One-click embedded action buttons.</li>
-                        <li>Quick access away from hardware devices.</li>
+                        <li>Alternative platforms beyond the physical button.</li>
+                        <li>Inclusive support across audio and text.</li>
+                        <li>One-click action buttons for faster help.</li>
                     </ul>
                 </article>
                 <article class="impact-card">
                     <h3 style="color: #93c5fd;">For families</h3>
                     <ul class="stack-list" style="margin-top: 0.5rem;">
-                        <li>Earlier awareness of critical incidents.</li>
-                        <li>Continuous status updates reduce anxiety.</li>
-                        <li>Assurance that alerts are context-aware.</li>
+                        <li>Earlier awareness when incidents happen.</li>
+                        <li>Status updates that reduce uncertainty.</li>
                     </ul>
                 </article>
                 <article class="impact-card">
                     <h3 style="color: #5eead4;">For operators</h3>
                     <ul class="stack-list" style="margin-top: 0.5rem;">
-                        <li>Reduced queue ambiguity and faster alignment.</li>
-                        <li>Live translated transcripts for dialect speakers.</li>
-                        <li>Focus human touch where high-confidence severity matters.</li>
+                        <li>AI insights for faster triage decisions.</li>
+                        <li>Clearer queue prioritisation and case context.</li>
+                        <li>Human touch focused on high-severity cases.</li>
                     </ul>
                 </article>
             </div>
@@ -1562,9 +1580,9 @@
     </section>
 
     <!-- ===========================================
-         SLIDE 10: THE FUTURE
+         SLIDE 11: THE FUTURE
          =========================================== -->
-    <section class="slide theme-soft" id="slide10">
+    <section class="slide theme-soft" id="slide11">
         <div class="slide-content">
             <div class="deck-tag reveal">The Future</div>
             <h2 class="reveal d1">Scaling beyond the POC to a national-grade safety network.</h2>
@@ -1590,9 +1608,9 @@
     </section>
 
     <!-- ===========================================
-         SLIDE 11: THANK YOU
+         SLIDE 12: THANK YOU
          =========================================== -->
-    <section class="slide theme-dark" id="slide11">
+    <section class="slide theme-dark" id="slide12">
         <div class="slide-content">
             <div class="thanks-wrap reveal d1">
                 <div class="thanks-logo">

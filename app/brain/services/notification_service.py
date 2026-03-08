@@ -71,6 +71,7 @@ class TelegramNotificationChannel(NotificationChannel):
             return {
                 "success": True,
                 "channel": "telegram",
+                "contact_name": contact.name,
                 "recipient": contact.telegram_user_id,
             }
         except Exception as e:
@@ -125,6 +126,7 @@ class TwilioSMSChannel(NotificationChannel):
                     "error": "No Twilio from number",
                     "channel": "sms",
                 }
+            from_number = self.from_number or ""
 
             if audio_url:
                 try:
@@ -133,10 +135,11 @@ class TwilioSMSChannel(NotificationChannel):
                         "to": contact.phone_number,
                         "media_url": [audio_url],
                     }
-                    if self.messaging_service_sid:
-                        audio_msg_params["messaging_service_sid"] = self.messaging_service_sid
+                    messaging_sid = self.messaging_service_sid
+                    if messaging_sid is not None:
+                        audio_msg_params["messaging_service_sid"] = messaging_sid
                     else:
-                        audio_msg_params["from_"] = self.from_number
+                        audio_msg_params["from_"] = from_number
                     client.messages.create(**audio_msg_params)
                 except Exception as e:
                     logger.warning(
@@ -148,28 +151,31 @@ class TwilioSMSChannel(NotificationChannel):
                         "body": f"Original audio: {audio_url}",
                         "to": contact.phone_number,
                     }
-                    if self.messaging_service_sid:
+                    messaging_sid = self.messaging_service_sid
+                    if messaging_sid is not None:
                         fallback_audio_link_params["messaging_service_sid"] = (
-                            self.messaging_service_sid
+                            messaging_sid
                         )
                     else:
-                        fallback_audio_link_params["from_"] = self.from_number
+                        fallback_audio_link_params["from_"] = from_number
                     client.messages.create(**fallback_audio_link_params)
 
             msg_params = {
                 "body": message,
                 "to": contact.phone_number,
             }
-            if self.messaging_service_sid:
-                msg_params["messaging_service_sid"] = self.messaging_service_sid
+            messaging_sid = self.messaging_service_sid
+            if messaging_sid is not None:
+                msg_params["messaging_service_sid"] = messaging_sid
             else:
-                msg_params["from_"] = self.from_number
+                msg_params["from_"] = from_number
 
             twilio_message = client.messages.create(**msg_params)
 
             return {
                 "success": True,
                 "channel": "sms",
+                "contact_name": contact.name,
                 "recipient": contact.phone_number,
                 "external_ref": twilio_message.sid,
             }

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from app.services.database import DatabaseService
 
@@ -34,7 +34,9 @@ class ActionLogger:
 
         response = self._db.client.table("ai_actions").insert(payload).execute()
         if response.data and len(response.data) > 0:
-            return response.data[0]
+            first = response.data[0]
+            if isinstance(first, dict):
+                return cast(dict[str, Any], first)
         return {}
 
     def log_notification_sent(
@@ -54,7 +56,7 @@ class ActionLogger:
             details={
                 "contact_name": contact_name,
                 "channel": channel,
-                "message": f"Emergency notification sent to {contact_name} via {channel}",
+                "description": f"Emergency notification sent to {contact_name} via {channel}.",
             },
             provider=channel,
             external_ref=external_ref,
@@ -66,14 +68,25 @@ class ActionLogger:
         alert_id: str,
         success: bool,
         language: str | None = None,
+        transcript_preview: str | None = None,
         error: str | None = None,
     ) -> dict[str, Any]:
         """Log transcription result."""
+        details: dict[str, Any] = {
+            "language": language,
+            "description": (
+                f"Audio transcription {'completed' if success else 'failed'}"
+                + (f" (language: {language})" if language else "")
+                + "."
+            ),
+        }
+        if transcript_preview:
+            details["transcript_preview"] = transcript_preview
         return self.log_action(
             alert_id=alert_id,
             action_type="transcribe_audio",
             action_status="success" if success else "failed",
-            details={"language": language},
+            details=details,
             error_message=error,
         )
 
@@ -93,6 +106,10 @@ class ActionLogger:
             details={
                 "risk_level": risk_level,
                 "risk_score": risk_score,
+                "description": (
+                    f"Risk classified as {risk_level.replace('_', ' ')} "
+                    f"with confidence {risk_score:.0%}."
+                ),
             },
             error_message=error,
         )
