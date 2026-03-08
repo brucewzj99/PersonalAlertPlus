@@ -780,7 +780,7 @@ async def override_alert(
     current_row = current_rows[0]
     transcript = current_row.get("transcription")
 
-    raw_update_payload = update.model_dump(exclude_none=True)
+    raw_update_payload = update.model_dump(exclude_unset=True)
     update_payload = _normalize_alert_update(
         {
             key: value

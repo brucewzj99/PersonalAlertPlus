@@ -115,5 +115,6 @@ class AlertUpdate(BaseModel):
     is_attended: bool | None = None
     is_resolved: bool | None = None
     operator: str | None = None
+    operator_remarks: str | None = None
     action_time: datetime | None = None
     operator_actions: list[dict[str, Any]] | None = None
