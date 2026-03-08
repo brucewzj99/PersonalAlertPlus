@@ -1,10 +1,6 @@
 {
     "rewrites": [
         {
-            "source": "/api/:path*",
-            "destination": "https://interoceptive-radia-disproportionably.ngrok-free.dev/api/:path*"
-        },
-        {
             "source": "/slides",
             "destination": "/slides/personal-alert-plus-v2.html"
         }
