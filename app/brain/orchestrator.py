@@ -481,33 +481,7 @@ class BrainOrchestrator:
             status=status,
         )
 
-        print(
-            f"[BrainOrchestrator] Step 9: Handling risk actions for {analysis.risk_level}..."
-        )
-        if analysis.risk_level in ["URGENT", "NON_URGENT", "UNCERTAIN", "FALSE_ALARM"]:
-            await self._handle_risk_actions(
-                alert_id=alert_id,
-                risk_level=analysis.risk_level,
-                senior=senior,
-                summary=summary,
-                risk_score=analysis.risk_score,
-                transcript=content,
-                audio_url=audio_url,
-            )
-
-        try:
-            await self._create_operator_action_recommendation(
-                alert_id=alert_id,
-                senior=senior,
-                analysis=analysis,
-                transcript=content,
-                translated_text=translated_text,
-                language_detected=language_detected,
-            )
-        except Exception as e:
-            logger.warning("Failed to create operator recommendation: %s", e)
-
-        print(f"[BrainOrchestrator] Step 10: Sending confirmation to senior...")
+        print(f"[BrainOrchestrator] Step 9: Sending confirmation to senior...")
         send_check_in = analysis.risk_level == "UNCERTAIN"
         send_need_info = analysis.risk_level in ["URGENT", "NON_URGENT"]
 
@@ -531,6 +505,32 @@ class BrainOrchestrator:
             send_check_in_audio=send_check_in,
             send_need_info_audio=send_need_info,
         )
+
+        print(
+            f"[BrainOrchestrator] Step 10: Handling risk actions for {analysis.risk_level}..."
+        )
+        if analysis.risk_level in ["URGENT", "NON_URGENT", "UNCERTAIN", "FALSE_ALARM"]:
+            await self._handle_risk_actions(
+                alert_id=alert_id,
+                risk_level=analysis.risk_level,
+                senior=senior,
+                summary=summary,
+                risk_score=analysis.risk_score,
+                transcript=content,
+                audio_url=audio_url,
+            )
+
+        try:
+            await self._create_operator_action_recommendation(
+                alert_id=alert_id,
+                senior=senior,
+                analysis=analysis,
+                transcript=content,
+                translated_text=translated_text,
+                language_detected=language_detected,
+            )
+        except Exception as e:
+            logger.warning("Failed to create operator recommendation: %s", e)
 
         return ProcessingResult(
             alert_id=alert_id,
@@ -589,12 +589,12 @@ class BrainOrchestrator:
                 "yue": "我无事",
             }
             escalate_text = {
-                "en": "Escalate",
-                "zh": "升级处理",
-                "ms": "Eskalasi",
-                "ta": "Escalate",
-                "nan": "升级处理",
-                "yue": "升级处理",
+                "en": "I have issues",
+                "zh": "我有问题",
+                "ms": "Saya ada masalah",
+                "ta": "எனக்கு சிக்கல் உள்ளது",
+                "nan": "我有状况",
+                "yue": "我有问题",
             }
 
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -610,7 +610,7 @@ class BrainOrchestrator:
                     [
                         InlineKeyboardButton(
                             escalate_text.get(lang, escalate_text["en"]),
-                            callback_data=f"escalate_non_urgent:{alert_id}",
+                            callback_data=f"escalate_urgent:{alert_id}",
                         )
                     ],
                 ]

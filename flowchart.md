@@ -19,6 +19,8 @@ flowchart TB
         A4[GET /api/v1/brain/health]
         A5[POST /api/v1/brain/conversations/check-timeout]
         A6[Operator API routes]
+        A7[GET /api/v1/operator/alerts/:id/ai-actions]
+        A8[POST /api/v1/operator/alerts/:id/recommend-actions]
     end
 
     subgraph Brain["Brain Layer (app/brain/)"]
@@ -39,6 +41,8 @@ flowchart TB
         O4[Prompt settings manager]
         O5[Seniors + emergency contacts manager]
         O6[Conversation replies view]
+        O7[AI recommendation panel]
+        O8[SIP click-to-call actions]
     end
 
     subgraph DB["Supabase (Postgres + Storage)"]
@@ -51,6 +55,7 @@ flowchart TB
         D7[(senior_conversations)]
         D8[(prompt_settings)]
         D9[(alerts-audio storage)]
+        D10[(operator_action_recommendations)]
     end
 
     subgraph External["External Services"]
@@ -103,6 +108,11 @@ flowchart TB
     O5 --> D1
     O5 --> D2
     O6 --> D4
+    O7 --> D10
+    O8 --> D1
+    O8 --> D2
+    O7 --> A8
+    O6 --> A7
 ```
 
 ---
@@ -134,6 +144,8 @@ sequenceDiagram
     Brain->>Brain: Apply guardrails (keywords + translation quality)
     Brain->>DB: Update alerts (risk, score, ai_assessment, status)
     Brain->>DB: Log ai_actions
+    Brain->>AI: Generate operator action recommendation
+    Brain->>DB: Insert operator_action_recommendations (fallback if AI fails)
 
     Note over Brain,Notify: 3) Notifications by risk
     alt URGENT or NON_URGENT
@@ -177,6 +189,8 @@ sequenceDiagram
     Ops->>API: PATCH /api/v1/operator/alerts/{id}/override
     API->>DB: Update alert + insert operator_actions rows
     API->>Senior: Optional multilingual operator action update (voice/text)
+    Ops->>API: GET /api/v1/operator/alerts/{id}/ai-actions
+    Ops->>API: POST /api/v1/operator/alerts/{id}/recommend-actions (on-demand refresh/fallback)
 ```
 
 ---
@@ -189,6 +203,7 @@ erDiagram
     SENIORS ||--o{ EMERGENCY_CONTACTS : has_many
     ALERTS ||--o{ AI_ACTIONS : has_many
     ALERTS ||--o{ OPERATOR_ACTIONS : has_many
+    ALERTS ||--o{ OPERATOR_ACTION_RECOMMENDATIONS : has_many
     ALERTS ||--o{ SENIOR_CONVERSATIONS : has_many
 
     SENIORS {
@@ -202,6 +217,7 @@ erDiagram
         int birth_day
         text preferred_language
         text medical_notes
+        text sip_url
         timestamptz created_at
     }
 
@@ -212,6 +228,7 @@ erDiagram
         text relationship
         text phone_number
         text telegram_user_id
+        text sip_url
         int priority_order
         bool notify_on_uncertain
         timestamptz created_at
@@ -263,6 +280,20 @@ erDiagram
         timestamptz created_at
     }
 
+    OPERATOR_ACTION_RECOMMENDATIONS {
+        uuid id PK
+        uuid case_id FK
+        text model
+        jsonb available_choices
+        jsonb recommended_actions
+        jsonb recommended_labels
+        text rationale
+        numeric confidence
+        jsonb context_alert_ids
+        jsonb raw_response
+        timestamptz created_at
+    }
+
     SENIOR_CONVERSATIONS {
         uuid id PK
         uuid senior_id FK
@@ -305,6 +336,8 @@ erDiagram
 | `/api/v1/operator/alerts` | GET | Operator alert feed |
 | `/api/v1/operator/alerts/{alert_id}/override` | PATCH | Override alert + persist operator action rows |
 | `/api/v1/operator/alerts/{alert_id}/conversation-replies` | GET | Fetch recent senior follow-up replies |
+| `/api/v1/operator/alerts/{alert_id}/ai-actions` | GET | Fetch AI action timeline/audit records |
+| `/api/v1/operator/alerts/{alert_id}/recommend-actions` | POST | Generate or return AI-recommended operator actions |
 | `/api/v1/operator/few-shot-examples` | GET | List few-shot examples |
 | `/api/v1/operator/few-shot-examples` | POST | Create few-shot example |
 | `/api/v1/operator/few-shot-examples/{example_id}` | PATCH | Update few-shot example |
@@ -321,5 +354,7 @@ erDiagram
 ## Notes
 
 - Timeout checking is run automatically by `apscheduler` in `app/main.py` every 5 seconds.
+- Brain also persists per-case operator action recommendations into `operator_action_recommendations` during ingest.
+- SIP click-to-call uses `sip_url` from `seniors` / `emergency_contacts` in dashboard action buttons.
 - `TwilioCallService` generates TwiML with gather action `/api/v1/twilio/gather`; that callback route is not implemented in this codebase yet.
 - Operator action state is derived from `operator_actions` rows in the API layer and shown in the dashboard.

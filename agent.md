@@ -140,6 +140,9 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * Choose dispatch destination when logging `dispatch_ambulance`
   * Select contacted family members as multi-select pill options when logging `call_family`
   * Review senior follow-up replies (including translated text and voice attachments)
+  * Review AI action timeline per case (`ai_actions`) for full automation audit trace
+  * View AI-generated recommended response actions (with rationale/confidence and historical context links)
+  * Trigger SIP click-to-call directly to seniors and emergency contacts from dashboard actions
   * Send multilingual senior updates when operator logs key actions (family called / response dispatched / attended)
 
 * This builds a supervised AI improvement cycle.
@@ -154,6 +157,7 @@ AI-Assisted Digital Extension for GovTech Personal Alert Button (PAB)
   * FastAPI Backend → AI processing & orchestration
   * Conversation Timeout Scheduler → periodic timeout checks (`senior_conversations`)
   * Supabase (Postgres + RLS) → Secure data storage
+  * Operator Action Recommendation Engine → Persists suggested response actions per case
   * Twilio → SMS fallback + timeout safety check-in calls
   * React + Vite Dashboard → Operator interface
   * (Optional) ClickHouse → Analytics layer
@@ -298,6 +302,7 @@ B1 --> B2[Load senior + emergency contacts]
 B1 --> B3[Transcribe/translate if needed]
 B1 --> B4[Classify risk + guardrails]
 B1 --> B5[Update alerts with risk + ai_assessment]
+B1 --> B6[Generate operator action recommendation]
 
 B4 --> C1{Risk level}
 C1 -->|URGENT| C2[Notify contacts + escalate]
@@ -334,12 +339,15 @@ subgraph Supabase
   S6[(senior_conversations)]
   S7[(few_shot_examples)]
   S8[(prompt_settings)]
+  S9[(operator_action_recommendations)]
 end
 
 B2 --> S1
 B2 --> S2
 A3 --> S3
 B5 --> S3
+B6 --> S4
+B6 --> S9
 C2 --> S4
 C3 --> S4
 C4 --> S4
@@ -380,6 +388,8 @@ The backend retrieves senior details (name, phone, address, medical notes) using
   * `database/001-operator-actions-table-and-backfill.sql` → adds `public.operator_actions`, backfills legacy action flags, keeps compatibility trigger
   * `database/002-remove-legacy-alert-action-columns.sql` → removes legacy action flag columns from `public.alerts` once app migration is complete
   * `database/003-add-alert-ai-assessment-column.sql` → adds `ai_assessment` in `public.alerts` for concise reasoning display in operator dashboard
+  * `database/004-operator-action-recommendations-table.sql` → adds `public.operator_action_recommendations` for AI-suggested operator response actions
+  * `database/005-add-sip-url-columns.sql` → adds `sip_url` columns to `public.seniors` and `public.emergency_contacts` for click-to-call workflows
 
 * Core Tables:
 
@@ -388,6 +398,7 @@ The backend retrieves senior details (name, phone, address, medical notes) using
   * alerts
   * ai_actions
   * operator_actions
+  * operator_action_recommendations
   * few_shot_examples
   * senior_conversations
   * prompt_settings
@@ -410,6 +421,7 @@ Registered seniors profile information.
 | birth_day | int | No | Day of birth (1-31) |
 | preferred_language | text | No | en/zh/ms/ta/nan/yue |
 | medical_notes | text | No | Medical conditions/notes (max 2000 chars) |
+| sip_url | text | No | SIP destination URI/ID for click-to-call |
 | created_at | timestamptz | Yes | Registration timestamp (auto-generated) |
 
 ---
@@ -426,6 +438,7 @@ Contacts to notify in case of emergency.
 | relationship | text | No | Relationship to senior (e.g., Son, Daughter) |
 | phone_number | text | No | Contact's phone number |
 | telegram_user_id | text | No | Contact's Telegram user ID |
+| sip_url | text | No | SIP destination URI/ID for click-to-call |
 | priority_order | int | No | Contact priority (1 = highest) |
 | notify_on_uncertain | bool | No | Whether this contact receives UNCERTAIN alerts |
 | created_at | timestamptz | Yes | Creation timestamp |
@@ -524,6 +537,27 @@ Tracks follow-up conversation windows opened after AI decisions.
   * Row Level Security enabled
   * Public access blocked
   * `public.operator_actions` protected by RLS with service-role full access and authenticated read policy
+  * `public.operator_action_recommendations` protected by RLS with service-role full access and authenticated read policy
+
+---
+
+### 6.8 🧭 Operator Action Recommendations Table (`public.operator_action_recommendations`)
+
+Stores AI-generated suggested response actions for each case.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | uuid | Yes | Auto-generated primary key |
+| case_id | uuid | Yes | Foreign key to alerts(id) |
+| model | text | No | AI model used to generate recommendation |
+| available_choices | jsonb | Yes | Action choices presented to recommendation engine |
+| recommended_actions | jsonb | Yes | Recommended action keys (ordered) |
+| recommended_labels | jsonb | Yes | Human-readable labels for recommended action keys |
+| rationale | text | No | Why these actions were recommended |
+| confidence | numeric | No | Recommendation confidence score (0.0-1.0) |
+| context_alert_ids | jsonb | Yes | Prior alert IDs used as supporting context |
+| raw_response | jsonb | No | Raw model response payload for traceability |
+| created_at | timestamptz | Yes | Recommendation creation timestamp |
 
 ---
 

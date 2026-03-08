@@ -5,3 +5,4 @@ venv
 *.pyo
 .venv
 .venv312
+frontend-slides

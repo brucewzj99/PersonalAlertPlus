@@ -3173,7 +3173,7 @@ const App: React.FC = () => {
                                                     SAVE AND UPDATE
                                                 </button>
                                                 <button
-                                                    className="dashboard-tab-btn"
+                                                    className="action-btn"
                                                     style={{
                                                         flex: 1,
                                                         padding: "1rem 1.25rem",

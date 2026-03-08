@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS public.alerts (
   analysis_summary text,
   keywords jsonb,
   senior_response text,
+  operator_remarks text,
   ambulance_dispatched boolean NOT NULL DEFAULT false,
   family_called boolean NOT NULL DEFAULT false,
   is_resolved boolean NOT NULL DEFAULT false,
