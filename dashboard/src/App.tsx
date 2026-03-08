@@ -518,13 +518,12 @@ const getAiActionDetails = (action: AiActionRecord): string | null => {
     const description = details.description;
     if (typeof description === "string" && description.trim()) {
         const transcriptPreview = details.transcript_preview;
-        if (
-            typeof transcriptPreview === "string" &&
-            transcriptPreview.trim()
-        ) {
+        if (typeof transcriptPreview === "string" && transcriptPreview.trim()) {
             return `${description} Audio captured: "${transcriptPreview}"`;
         }
-        if (normalizeOperatorActionName(action.action_type) === "notify_family") {
+        if (
+            normalizeOperatorActionName(action.action_type) === "notify_family"
+        ) {
             const contact = details.contact_name;
             if (typeof contact === "string" && contact.trim()) {
                 return `${description} Contact: ${contact}.`;
@@ -663,7 +662,9 @@ const App: React.FC = () => {
     };
 
     const fetchRiskPrompt = async () => {
-        const response = await apiFetch("/api/v1/operator/settings/risk-prompt");
+        const response = await apiFetch(
+            "/api/v1/operator/settings/risk-prompt",
+        );
         if (!response.ok)
             throw new Error(`Failed to fetch risk prompt (${response.status})`);
         const data = (await response.json()) as {
@@ -722,9 +723,13 @@ const App: React.FC = () => {
 
     const fetchCaseAiActions = async (alertId: string) => {
         try {
-            const response = await apiFetch(`/api/v1/operator/alerts/${alertId}/ai-actions`);
+            const response = await apiFetch(
+                `/api/v1/operator/alerts/${alertId}/ai-actions`,
+            );
             if (!response.ok)
-                throw new Error(`Failed to fetch AI actions (${response.status})`);
+                throw new Error(
+                    `Failed to fetch AI actions (${response.status})`,
+                );
             const data = (await response.json()) as AiActionRecord[];
             setCaseAiActions(Array.isArray(data) ? data : []);
         } catch (error) {
@@ -761,7 +766,6 @@ const App: React.FC = () => {
         const timerId = window.setTimeout(() => setToastMessage(null), 2200);
         return () => window.clearTimeout(timerId);
     }, [toastMessage]);
-
 
     const updateAlertInDB = async (
         alertId: string,
@@ -1327,9 +1331,9 @@ const App: React.FC = () => {
             Boolean(alert.family_called);
         const recommendation = alert.ai_recommendation;
         const topRecommendation = recommendation
-            ? (recommendation.recommended_labels?.[0] ||
+            ? recommendation.recommended_labels?.[0] ||
               recommendation.recommended_actions?.[0] ||
-              "")
+              ""
             : "";
 
         return (
@@ -1588,7 +1592,9 @@ const App: React.FC = () => {
                                         >
                                             {alert.seniors?.full_name ||
                                                 "Unknown Senior"}
-                                            {resolveAudioUrl(alert.audio_url) && (
+                                            {resolveAudioUrl(
+                                                alert.audio_url,
+                                            ) && (
                                                 <span
                                                     className="severity-badge"
                                                     style={{
@@ -2431,7 +2437,7 @@ const App: React.FC = () => {
                                                     marginBottom: "0.35rem",
                                                 }}
                                             >
-                                                Name: {" "}
+                                                Name:{" "}
                                                 {selectedCase.seniors
                                                     ?.full_name ||
                                                     "Unknown Senior"}
@@ -2442,7 +2448,7 @@ const App: React.FC = () => {
                                                     marginBottom: "0.35rem",
                                                 }}
                                             >
-                                                Date of Birth: {" "}
+                                                Date of Birth:{" "}
                                                 {getSeniorBirthDateDisplay(
                                                     selectedCase.seniors
                                                         ?.birth_year,
@@ -2458,7 +2464,7 @@ const App: React.FC = () => {
                                                     marginBottom: "0.35rem",
                                                 }}
                                             >
-                                                Age: {" "}
+                                                Age:{" "}
                                                 {getSeniorAge(
                                                     selectedCase.seniors
                                                         ?.birth_year,
@@ -2529,7 +2535,9 @@ const App: React.FC = () => {
                                                     marginBottom: "0.6rem",
                                                 }}
                                             >
-                                                Disclaimer: transcription generated by AI and may contain inaccuracies.
+                                                Disclaimer: transcription
+                                                generated by AI and may contain
+                                                inaccuracies.
                                             </div>
                                             {isAlertTranslated(
                                                 selectedCase,
@@ -2826,12 +2834,13 @@ const App: React.FC = () => {
                                                                 "0.55rem",
                                                         }}
                                                     >
-                                                        {(
-                                                            selectedCaseRecommendation.recommended_labels &&
-                                                            selectedCaseRecommendation.recommended_labels
-                                                                .length > 0
-                                                                ? selectedCaseRecommendation.recommended_labels
-                                                                : selectedCaseRecommendation.recommended_actions || []
+                                                        {(selectedCaseRecommendation.recommended_labels &&
+                                                        selectedCaseRecommendation
+                                                            .recommended_labels
+                                                            .length > 0
+                                                            ? selectedCaseRecommendation.recommended_labels
+                                                            : selectedCaseRecommendation.recommended_actions ||
+                                                              []
                                                         ).map((label) => (
                                                             <span
                                                                 key={label}
@@ -2861,7 +2870,7 @@ const App: React.FC = () => {
                                                         }}
                                                     >
                                                         Generated from AI{" | "}
-                                                        Confidence: {" "}
+                                                        Confidence:{" "}
                                                         {Number.isFinite(
                                                             selectedCaseRecommendation.confidence,
                                                         )
@@ -2880,7 +2889,8 @@ const App: React.FC = () => {
                                                         fontSize: "0.88rem",
                                                     }}
                                                 >
-                                                    Recommendation not available yet for this case.
+                                                    Recommendation not available
+                                                    yet for this case.
                                                 </div>
                                             )}
                                         </div>
@@ -3330,7 +3340,8 @@ const App: React.FC = () => {
                                                 color: "var(--text-muted)",
                                             }}
                                         >
-                                            No AI actions recorded for this case.
+                                            No AI actions recorded for this
+                                            case.
                                         </div>
                                     ) : (
                                         caseAiActions.map((action) => {
